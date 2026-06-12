@@ -24,7 +24,7 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11.0"
       - key: LOG_LEVEL
         value: INFO
       # Учётные записи задаются вручную в дашборде (sync: false — не из blueprint).

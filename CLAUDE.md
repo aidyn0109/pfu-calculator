@@ -53,13 +53,16 @@ Excel-файл (разовый импорт)
 ## 3. СТЕК ТЕХНОЛОГИЙ
 
 ### Backend
-- **Python 3.11+**
+- **Python 3.11** (закреплён: `.python-version`, `runtime.txt`)
 - **FastAPI** — REST API фреймворк
 - **Pydantic v2** — валидация входных данных и схемы ответов
 - **pandas** — загрузка и валидация Excel при импорте
 - **openpyxl** — экспорт результатов в Excel
-- **SQLAlchemy 2.0** — ORM для работы с БД
-- **aiosqlite** — async драйвер SQLite
+- **SQLAlchemy 2.0** — ORM (async), работает с обоими драйверами без изменений в коде
+- **aiosqlite** — async драйвер SQLite (локальная разработка)
+- **asyncpg** — async драйвер PostgreSQL (продакшен, например Render)
+- **Starlette SessionMiddleware** (+ itsdangerous) — cookie-сессии для авторизации
+- **python-dotenv** — загрузка `.env`; **python-multipart** — загрузка Excel через форму
 - **uvicorn** — ASGI-сервер
 
 ### Frontend
@@ -68,8 +71,8 @@ Excel-файл (разовый импорт)
 - **Jinja2** — шаблонизатор (шаблоны отдаются FastAPI)
 
 ### Деплой
-- **Docker + docker-compose**
-- **Nginx** — reverse proxy
+- **Render** (free tier): web-сервис + управляемый PostgreSQL — см. `render.yaml`, `DEPLOY.md`
+- **Docker + docker-compose + Nginx** — альтернативный вариант self-hosted
 
 ---
 
@@ -79,16 +82,21 @@ Excel-файл (разовый импорт)
 pfu_calculator/
 ├── CLAUDE.md                  # этот файл
 ├── README.md
+├── DEPLOY.md                  # инструкция по деплою на Render
 ├── docker-compose.yml
 ├── Dockerfile
 ├── nginx.conf
+├── render.yaml                # Render Blueprint (web + PostgreSQL)
+├── runtime.txt               # python-3.11.0 (для Render/Heroku-формат)
+├── .python-version           # 3.11.0 (для pyenv/Render)
 ├── requirements.txt
 ├── .env.example
 │
 ├── app/
-│   ├── main.py                # точка входа FastAPI
-│   ├── config.py              # ВСЕ константы: МРП, капы, пороги
+│   ├── main.py                # точка входа FastAPI, авторизация, страницы
+│   ├── config.py              # ВСЕ константы: МРП, капы, пороги; настройки окружения
 │   ├── dependencies.py        # зависимости FastAPI (кеш, сессия БД)
+│   ├── auth.py                # авторизация по cookie-сессии, роли admin/user
 │   │
 │   ├── api/
 │   │   ├── routes.py          # все эндпоинты
@@ -100,11 +108,12 @@ pfu_calculator/
 │   ├── db/                    # слой базы данных
 │   │   ├── database.py        # инициализация SQLAlchemy, создание таблиц
 │   │   ├── models.py          # ORM-модели: Company, Calculation
-│   │   ├── companies.py       # CRUD для таблицы companies
+│   │   ├── companies.py       # CRUD + upsert (диалект-независимый: SQLite/PostgreSQL)
 │   │   └── calculations.py    # CRUD для таблицы calculations
 │   │
-│   ├── data/                  # работа с Excel (только импорт)
-│   │   ├── importer.py        # чтение Excel → валидация → запись в БД
+│   ├── data/                  # работа с Excel и кеш
+│   │   ├── importer.py        # чтение Excel (диск/upload) → валидация → запись в БД
+│   │   ├── exporter.py        # формирование Excel-выгрузки результатов
 │   │   └── cache.py           # in-memory кеш, строится из БД
 │   │
 │   ├── models/                # доменные модели (не ORM)
@@ -112,16 +121,17 @@ pfu_calculator/
 │   │
 │   └── templates/
 │       ├── base.html
-│       ├── index.html
-│       └── history.html
+│       ├── login.html         # страница входа
+│       ├── index.html         # калькулятор (+ история секцией)
+│       └── admin.html         # администрирование (импорт/CRUD компаний)
 │
 ├── data/
 │   └── import/
-│       └── companies.xlsx         # Excel с данными компаний — Claude Code читает
-│                                  # его при инициализации БД. НЕ коммитить в git.
+│       └── companies.xlsx         # Excel для локального авто-импорта.
+│                                  # НЕ коммитить (на деплое — загрузка через UI).
 │
 ├── exports/                   # временные Excel-экспорты (gitignore)
-├── pfu.db                     # SQLite база данных (gitignore)
+├── pfu.db                     # SQLite база данных, локально (gitignore)
 │
 └── tests/
     ├── test_calculator.py     # тесты формул — ОБЯЗАТЕЛЬНЫ
@@ -215,29 +225,43 @@ TAXES_FACTOR   = 0.05
 PAYROLL_STEP   = 0.1
 PAYROLL_FACTOR = 0.1
 
-# БД
-DATABASE_URL = "sqlite+aiosqlite:///./pfu.db"
+# БД (из окружения, fallback на локальный SQLite).
+# postgres:// и postgresql:// автоматически приводятся к postgresql+asyncpg://.
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./pfu.db")
 MAX_HISTORY_RECORDS = 1000
 
-# Ожидаемые столбцы в Excel (точные названия — уточнить у пользователя)
+# Порт берётся из окружения (Render задаёт PORT автоматически)
+PORT = int(os.getenv("PORT", "8000"))
+
+# Авторизация и роли (учётные записи — из окружения)
+SECRET_KEY     = os.getenv("SECRET_KEY", "dev-insecure-secret-change-me")
+ROLE_ADMIN     = "admin"
+ROLE_USER      = "user"
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+USER_USERNAME  = os.getenv("USER_USERNAME", "user")
+USER_PASSWORD  = os.getenv("USER_PASSWORD", "user")
+
+# Ожидаемые столбцы в Excel (сверены с фактическим файлом companies.xlsx)
 EXCEL_COLUMNS = {
-    "bin":     "БИН",
-    "name":    "Наименование компании",
+    "bin":     "БИН ТОО",
+    "name":    "Наименование ТОО",
     "revenue": ["Доходы 2022", "Доходы 2023", "Доходы 2024"],
-    "taxes":   ["Налоги 2022", "Налоги 2023", "Налоги 2024"],
+    "taxes":   ["Уплаченные налоги 2022", "Уплаченные налоги 2023", "Уплаченные налоги 2024"],
     "payroll": ["ФОТ 2022", "ФОТ 2023", "ФОТ 2024"],
 }
+BIN_LENGTH = 12  # БИН нормализуется до 12 цифр (ведущие нули в Excel теряются)
 
 # Корпоративный стиль BI Group
 BRAND_COLOR_PRIMARY   = "#0060FE"
 BRAND_COLOR_SECONDARY = "#FFFFFF"
 
-# Путь для загрузки Excel при импорте
+# Путь для локального авто-импорта Excel
 IMPORT_FILE_PATH = "data/import/companies.xlsx"
 ```
 
 > ⚠️ Если изменяется МРП или пороговые значения — менять **только в `config.py`**.  
-> ⚠️ Точные названия столбцов Excel уточнить у пользователя перед импортом.
+> ⚠️ Названия столбцов Excel сверены с реальным файлом и зафиксированы выше.
 
 ---
 
@@ -346,8 +370,14 @@ S_mrp > 3 200 000             → PFU_cap = 865%
 
 ## 8. API ЭНДПОИНТЫ
 
+> **Авторизация.** Доступ — по cookie-сессии (а не по токену). Роли: `admin`
+> и `user`. Пользовательские эндпоинты требуют входа (любая роль), admin-эндпоинты
+> — роль `admin`. Вход/выход: `GET/POST /login`, `GET /logout`. Страницы:
+> `/` (калькулятор, обе роли), `/admin` (только admin). Не вошедший пользователь
+> получает 401 на API и редирект на `/login` на страницах.
+
 ### `GET /companies`
-Список всех компаний из кеша (строится из БД).
+Список всех компаний из кеша (строится из БД). Требует входа.
 
 **Response:**
 ```json
@@ -396,19 +426,23 @@ S_mrp > 3 200 000             → PFU_cap = 865%
 ```
 
 ### `GET /history`
-Последние 20 расчётов из таблицы `calculations`.
+Последние 20 расчётов из таблицы `calculations` (JSON). Требует входа.
+Примечание: путь `/history` занят этим JSON-эндпоинтом, поэтому история
+отображается секцией на странице калькулятора, а не отдельной страницей.
 
 ### `GET /export/{calculation_id}`
-Excel-файл с результатами расчёта по `calculation_id`.
+Excel-файл с результатами расчёта по `calculation_id`. Требует входа.
 
-### `POST /admin/import-excel`
-Читает Excel из `data/import/companies.xlsx`, валидирует,
-**добавляет новые компании и обновляет существующие** (upsert по БИН),
-пересобирает in-memory кеш. Существующие компании не удаляются.
+### `POST /admin/import-excel-upload` (admin)
+**Основной способ импорта.** Принимает загруженный через браузер Excel-файл
+(multipart, поле `file`), валидирует, **upsert по БИН** (добавляет новые,
+обновляет существующие, не удаляет старые), пересобирает кеш.
 
-Защитить токеном из `.env` (`ADMIN_TOKEN`).
+### `POST /admin/import-excel` (admin)
+Импорт из файла на диске сервера (`data/import/companies.xlsx`). Используется
+для локального авто-импорта при старте; на деплое данных на диске нет.
 
-**Response:**
+**Response (оба импорта):**
 ```json
 {
   "imported": 46,
@@ -419,11 +453,14 @@ Excel-файл с результатами расчёта по `calculation_id`.
 }
 ```
 
-### `POST /admin/companies` (опционально, MVP+)
+### `GET /admin/companies` (admin)
+Полный список компаний со всеми показателями (для таблицы администрирования).
+
+### `POST /admin/companies` (admin)
 Добавить одну компанию вручную через форму (без Excel).
 
-### `PUT /admin/companies/{bin}` (опционально, MVP+)
-Обновить данные одной компании.
+### `PUT /admin/companies/{bin}` (admin)
+Обновить данные одной компании (БИН не меняется).
 
 ---
 
@@ -433,34 +470,27 @@ Excel-файл с результатами расчёта по `calculation_id`.
 ```bash
 # 1. Установить зависимости
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate            # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # 2. Настроить окружение
 cp .env.example .env
-# отредактировать .env
+# отредактировать .env (SECRET_KEY, учётные записи)
 
-# 3. Запустить сервер (БД создаётся автоматически при старте)
+# 3. Запустить сервер (БД и таблицы создаются автоматически при старте)
 uvicorn app.main:app --reload --port 8000
 
-# 4. Положить Excel в data/import/companies.xlsx
-
-# 5. Выполнить импорт данных
-curl -X POST http://localhost:8000/admin/import-excel \
-     -H "X-Admin-Token: your_token"
-
-# 6. Открыть http://localhost:8000
+# 4. Открыть http://localhost:8000 → вход под админом
+#    Данные: «Администрирование» → «Импорт из Excel» → выбрать .xlsx → загрузить.
+#    Локально: если файл лежит в data/import/companies.xlsx, он подхватится
+#    автоматически при старте на пустой базе (авто-импорт).
 ```
 
 ### При обновлении данных (новый Excel)
-```bash
-# Заменить файл
-cp new_companies.xlsx data/import/companies.xlsx
-
-# Выполнить повторный импорт (перезапишет таблицу companies)
-curl -X POST http://localhost:8000/admin/import-excel \
-     -H "X-Admin-Token: your_token"
-```
+Войти как админ → «Администрирование» → блок «Импорт из Excel» → загрузить новый
+файл. Это upsert по БИН: обновит существующие и добавит новые компании,
+ничего не удаляя. Старый способ (файл на диске + `POST /admin/import-excel`)
+остаётся для локальной разработки.
 
 ---
 
@@ -474,14 +504,20 @@ curl -X POST http://localhost:8000/admin/import-excel \
 | `Revenue_sum = 0` | Taxes_indicator = 0, предупреждение в results |
 | Все 3 года NULL у компании | Компания исключается, error в её блоке results |
 | БД недоступна | 500 + «Обратитесь к администратору» |
-| Excel не найден при импорте | 400 + описание ошибки (только для /admin/) |
+| Excel не найден / неверный формат при импорте | 400 + описание ошибки (admin) |
+| Не авторизован | 401 на API, редирект на `/login` на страницах |
+| Недостаточно прав (не admin) | 403 на API, редирект на `/` на странице `/admin` |
 | Любая неожиданная ошибка | 500 + «Произошла ошибка. Обратитесь к администратору» (полный traceback только в лог) |
 
 ---
 
 ## 11. FRONTEND
 
-### Страница калькулятора (`/`)
+### Страница входа (`/login`)
+- Логин/пароль, две роли (admin/user). После входа — редирект на `/` (user)
+  или `/admin` (admin). В шапке — имя пользователя, роль и «Выйти».
+
+### Страница калькулятора (`/`, обе роли)
 - Поле ввода суммы в тенге (числовое, только положительные)
 - Tom Select мультиселект с поиском по названию и БИН
 - Кнопка «Рассчитать ПФУ»
@@ -489,12 +525,15 @@ curl -X POST http://localhost:8000/admin/import-excel \
   - Название и БИН
   - Предупреждения (если есть) — жёлтый блок
   - Промежуточные показатели: Revenue / Taxes / Payroll (процент и индикатор)
-  - Пометка «применён кап» если `*_cap_applied = true`
+  - Пометка «применено ограничение» если `*_cap_applied = true`
   - Итоговый ПФУ — крупно, выделить цветом
 - Кнопка «Экспорт в Excel»
+- Секция «История расчётов» (таблица: дата/время, сумма, число компаний, экспорт)
 
-### Страница истории (`/history`)
-- Таблица: дата/время, сумма, список компаний, кнопка экспорта
+### Страница администрирования (`/admin`, только admin)
+- Импорт из Excel: **загрузка файла через браузер** (multipart)
+- Добавление компании вручную (форма)
+- Таблица компаний с поиском и кнопкой «Изменить» (редактирование)
 
 ### Стиль — BI Group
 - Основной цвет: `#0060FE`
@@ -536,10 +575,21 @@ test_boundary_3_200_000()          # ровно 3 200 000 МРП → кап 500%
 ## 13. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (`.env`)
 
 ```
-ADMIN_TOKEN=your_secret_token_here
+# База данных (локально SQLite; на Render — PostgreSQL через DATABASE_URL)
 DATABASE_URL=sqlite+aiosqlite:///./pfu.db
 LOG_LEVEL=INFO
+# PORT задаёт платформа (Render); локально по умолчанию 8000
+
+# Авторизация
+SECRET_KEY=change-me-to-a-long-random-string
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+USER_USERNAME=user
+USER_PASSWORD=user
 ```
+
+> Python закреплён на 3.11 (`.python-version` = `3.11.0`, `runtime.txt` =
+> `python-3.11.0`). `pydantic-core==2.27.2` ставится на 3.11 из готового wheel.
 
 ---
 
@@ -564,5 +614,7 @@ LOG_LEVEL=INFO
 
 ---
 
-*Последнее обновление: 2025*  
+*Последнее обновление: 2026-06 (добавлены авторизация с ролями, загрузка Excel
+через браузер, поддержка PostgreSQL/asyncpg, деплой на Render, фикс названий
+столбцов Excel)*  
 *Владелец: Aidyn (администратор системы)*
