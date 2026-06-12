@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block nav_admin %}active{% endblock %}
+{% block title %}Администрирование — Калькулятор ПФУ{% endblock %}
+{% block content %}
+<div x-data="admin()" x-init="init()">
+
+    <h1>Администрирование данных</h1>
+    <p class="subtitle">Импорт из Excel, добавление и редактирование компаний.</p>
+
+    <!-- Импорт из Excel (загрузка файла) -->
+    <div class="card">
+        <h2>Импорт из Excel</h2>
+        <p class="muted" style="margin-top:-6px;">
+            Выберите файл <code>.xlsx</code> с компаниями и загрузите его. Существующие компании
+            обновятся, новые добавятся (по БИН). Старые компании не удаляются.
+            Ожидаемые колонки: <code>БИН ТОО</code>, <code>Наименование ТОО</code>,
+            <code>Доходы / Уплаченные налоги / ФОТ</code> за 2022–2024.
+        </p>
+
+        <div class="toolbar">
+            <input type="file" accept=".xlsx,.xls" @change="onFileSelected($event)">
+            <button class="btn" @click="uploadImport()" :disabled="importing || !selectedFileName">
+                <span x-text="importing ? 'Загрузка…' : 'Загрузить и импортировать'"></span>
+            </button>
+        </div>
+        <div class="muted" x-show="selectedFileName" style="margin-top:8px;" x-text="'Выбран файл: ' + selectedFileName"></div>
+
+        <div class="error" x-show="importError" x-text="importError" style="margin-top:14px;"></div>
+
+        <template x-if="importResult">
+            <div style="margin-top:16px;">
+                <div class="success" x-text="`Импортировано: ${importResult.imported} · добавлено: ${importResult.added} · обновлено: ${importResult.updated}`"></div>
+                <template x-if="importResult.errors && importResult.errors.length">
+                    <div style="margin-top:10px;">
+                        <template x-for="e in importResult.errors" :key="e"><div class="error" x-text="e"></div></template>
+                    </div>
+                </template>
+                <template x-if="importResult.warnings && importResult.warnings.length">
+                    <details style="margin-top:10px;">
+                        <summary class="muted" x-text="`Предупреждений: ${importResult.warnings.length}`"></summary>
+                        <div style="margin-top:8px;">
+                            <template x-for="w in importResult.warnings" :key="w"><div class="warn" x-text="w"></div></template>
+                        </div>
+                    </details>
+                </template>
+            </div>
+        </template>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div class="card" style="margin-top:18px;" id="company-form">
+        <h2 x-text="editMode ? ('Редактирование компании: ' + form.bin) : 'Добавить компанию вручную'"></h2>
+        <p class="muted" style="margin-top:-6px;" x-show="!editMode">
+            Чтобы отредактировать существующую компанию — нажмите «Изменить» в таблице ниже.
+        </p>
+
+        <div class="grid-2">
+            <div>
+                <label>БИН <span class="hint">— 12 цифр</span></label>
+                <input type="text" x-model="form.bin" maxlength="12" placeholder="000000000000" :disabled="editMode">
+            </div>
+            <div>
+                <label>Наименование</label>
+                <input type="text" x-model="form.name" placeholder="ТОО ...">
+            </div>
+        </div>
+
+        <div style="margin-top:14px;">
+            <template x-for="metric in metrics" :key="metric.key">
+                <div style="margin-bottom:10px;">
+                    <label x-text="metric.label + ' по годам'"></label>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                        <template x-for="year in years" :key="year">
+                            <input type="number" step="any" :placeholder="year"
+                                   x-model.number="form[metric.key + '_' + year]">
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <div class="error" x-show="formError" x-text="formError" style="margin-top:12px;"></div>
+        <div class="success" x-show="formSuccess" x-text="formSuccess" style="margin-top:12px;"></div>
+
+        <div class="toolbar" style="margin-top:16px;">
+            <button class="btn" @click="submitForm()" :disabled="savingForm">
+                <span x-text="editMode ? 'Сохранить изменения' : 'Добавить компанию'"></span>
+            </button>
+            <button class="btn ghost" x-show="editMode" @click="resetForm()">Отмена</button>
+        </div>
+    </div>
+
+    <!-- Список компаний -->
+    <div class="card" style="margin-top:18px;">
+        <div class="toolbar" style="margin-bottom:14px;">
+            <h2 style="margin:0;">Компании в базе <span class="muted" x-text="'· ' + companies.length"></span></h2>
+            <div class="spacer"></div>
+            <input type="text" x-model="filter" placeholder="Поиск по названию или БИН…" style="max-width:260px;">
+            <button class="btn ghost sm" @click="loadCompanies()">Обновить</button>
+        </div>
+
+        <div class="error" x-show="listError" x-text="listError"></div>
+
+        <div x-show="filtered().length" style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr><th>БИН</th><th>Наименование</th><th>Доходы (сумма)</th><th>Налоги (сумма)</th><th>ФОТ (сумма)</th><th></th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="c in filtered()" :key="c.bin">
+                        <tr>
+                            <td x-text="c.bin"></td>
+                            <td x-text="c.name"></td>
+                            <td x-text="sumMetric(c, 'revenue')"></td>
+                            <td x-text="sumMetric(c, 'taxes')"></td>
+                            <td x-text="sumMetric(c, 'payroll')"></td>
+                            <td><button class="btn secondary sm" @click="editCompany(c)">Изменить</button></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        <div class="empty" x-show="!filtered().length && !listError">
+            Компаний нет. Запустите импорт или добавьте компанию вручную.
+        </div>
+    </div>
+</div>
+
+<script>
+function admin() {
+    return {
+        years: [2022, 2023, 2024],
+        metrics: [
+            { key: 'revenue', label: 'Доходы' },
+            { key: 'taxes', label: 'Уплаченные налоги' },
+            { key: 'payroll', label: 'ФОТ' },
+        ],
+        importing: false, importResult: null, importError: '',
+        selectedFile: null, selectedFileName: '',
+        companies: [], listError: '', filter: '',
+        form: {}, editMode: false, savingForm: false, formError: '', formSuccess: '',
+
+        init() {
+            this.resetForm();
+            this.loadCompanies();
+        },
+
+        headers() { return { 'Content-Type': 'application/json' }; },
+
+        fmtNum(v) {
+            if (v === null || v === undefined) return '—';
+            return Number(v).toLocaleString('ru-RU');
+        },
+        sumMetric(c, prefix) {
+            const vals = this.years.map(y => c[prefix + '_' + y]).filter(v => v !== null && v !== undefined);
+            if (!vals.length) return '—';
+            return this.fmtNum(vals.reduce((a, b) => a + b, 0));
+        },
+
+        onFileSelected(event) {
+            this.selectedFile = event.target.files[0] || null;
+            this.selectedFileName = this.selectedFile ? this.selectedFile.name : '';
+            this.importError = ''; this.importResult = null;
+        },
+
+        async uploadImport() {
+            this.importError = ''; this.importResult = null;
+            if (!this.selectedFile) { this.importError = 'Выберите файл .xlsx.'; return; }
+            this.importing = true;
+            try {
+                const fd = new FormData();
+                fd.append('file', this.selectedFile);
+                // Content-Type не указываем — браузер сам проставит multipart-границу.
+                const resp = await fetch('/admin/import-excel-upload', { method: 'POST', body: fd });
+                const data = await resp.json();
+                if (!resp.ok) { this.importError = data.detail || 'Ошибка импорта.'; return; }
+                this.importResult = data;
+                this.loadCompanies();
+            } catch (e) { this.importError = 'Ошибка соединения с сервером.'; }
+            finally { this.importing = false; }
+        },
+
+        async loadCompanies() {
+            this.listError = '';
+            try {
+                const resp = await fetch('/admin/companies', { headers: this.headers() });
+                if (resp.status === 401 || resp.status === 403) {
+                    this.listError = 'Сессия истекла — войдите заново.'; this.companies = []; return;
+                }
+                if (!resp.ok) { this.listError = 'Не удалось загрузить компании.'; return; }
+                this.companies = await resp.json();
+            } catch (e) { this.listError = 'Ошибка соединения с сервером.'; }
+        },
+
+        filtered() {
+            const f = (this.filter || '').toLowerCase().trim();
+            if (!f) return this.companies;
+            return this.companies.filter(c =>
+                c.name.toLowerCase().includes(f) || c.bin.includes(f));
+        },
+
+        emptyForm() {
+            const o = { bin: '', name: '' };
+            for (const m of this.metrics) for (const y of this.years) o[m.key + '_' + y] = null;
+            return o;
+        },
+        resetForm() {
+            this.form = this.emptyForm(); this.editMode = false;
+            this.formError = ''; this.formSuccess = '';
+        },
+        editCompany(c) {
+            this.form = Object.assign(this.emptyForm(), c);
+            this.editMode = true; this.formError = ''; this.formSuccess = '';
+            document.getElementById('company-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        },
+
+        buildPayload(includeBin) {
+            const p = includeBin ? { bin: this.form.bin, name: this.form.name } : { name: this.form.name };
+            for (const m of this.metrics) for (const y of this.years) {
+                const k = m.key + '_' + y;
+                const v = this.form[k];
+                p[k] = (v === '' || v === undefined) ? null : v;
+            }
+            return p;
+        },
+
+        async submitForm() {
+            this.formError = ''; this.formSuccess = '';
+            if (!this.form.name) { this.formError = 'Введите наименование.'; return; }
+            if (!this.editMode && !/^\d{12}$/.test(this.form.bin)) {
+                this.formError = 'БИН должен содержать ровно 12 цифр.'; return;
+            }
+            this.savingForm = true;
+            try {
+                let resp;
+                if (this.editMode) {
+                    resp = await fetch('/admin/companies/' + encodeURIComponent(this.form.bin),
+                        { method: 'PUT', headers: this.headers(), body: JSON.stringify(this.buildPayload(false)) });
+                } else {
+                    resp = await fetch('/admin/companies',
+                        { method: 'POST', headers: this.headers(), body: JSON.stringify(this.buildPayload(true)) });
+                }
+                const data = await resp.json();
+                if (!resp.ok) {
+                    this.formError = (typeof data.detail === 'string') ? data.detail : 'Ошибка сохранения.';
+                    return;
+                }
+                const msg = this.editMode ? 'Компания обновлена.' : 'Компания добавлена.';
+                this.resetForm();
+                this.formSuccess = msg;
+                this.loadCompanies();
+            } catch (e) { this.formError = 'Ошибка соединения с сервером.'; }
+            finally { this.savingForm = false; }
+        },
+    };
+}
+</script>
+{% endblock %}

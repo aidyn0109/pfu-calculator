@@ -1,0 +1,38 @@
+# Render Blueprint — веб-сервис + PostgreSQL (free tier).
+# Создание: Render Dashboard → New → Blueprint → указать репозиторий.
+
+databases:
+  - name: pfu-db
+    plan: free
+
+services:
+  - type: web
+    name: pfu-calculator
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /login
+    envVars:
+      # DATABASE_URL берётся из управляемой БД (postgresql://...).
+      # app/config.py сам приводит его к postgresql+asyncpg://.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pfu-db
+          property: connectionString
+      # Случайный ключ подписи сессии — генерируется Render автоматически.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: LOG_LEVEL
+        value: INFO
+      # Учётные записи задаются вручную в дашборде (sync: false — не из blueprint).
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: USER_USERNAME
+        sync: false
+      - key: USER_PASSWORD
+        sync: false

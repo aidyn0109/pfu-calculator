@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block nav_calc %}active{% endblock %}
+{% block content %}
+<div x-data="calculator()" x-init="init()">
+
+    <h1>Расчёт показателя финансовой устойчивости</h1>
+    <p class="subtitle">Введите сумму и выберите компании — ПФУ рассчитывается по каждой компании отдельно.</p>
+
+    <div class="card">
+        <div class="grid-2">
+            <div>
+                <label for="amount">Сумма, тенге <span class="hint">— минимум 800 000 МРП</span></label>
+                <input id="amount" type="number" min="1" step="any" x-model.number="amount"
+                       placeholder="Например, 5 000 000 000">
+                <div class="muted" x-show="amount > 0" style="margin-top:6px;"
+                     x-text="'≈ ' + fmt(amount / mrp) + ' МРП (МРП = ' + mrp + ' ₸)'"></div>
+            </div>
+            <div>
+                <label for="companies">Компании <span class="hint">— поиск по названию или БИН</span></label>
+                <select id="companies" multiple placeholder="Выберите компании..."></select>
+            </div>
+        </div>
+
+        <div class="toolbar" style="margin-top:20px;">
+            <button class="btn" @click="calculate()" :disabled="loading">
+                <span x-text="loading ? 'Расчёт…' : 'Рассчитать ПФУ'"></span>
+            </button>
+            <span class="muted" x-show="!companiesLoaded && companiesError" x-text="companiesError"></span>
+            <span class="muted" x-show="companiesLoaded && companiesCount === 0">
+                Компании не загружены — выполните импорт в разделе «Администрирование».
+            </span>
+        </div>
+
+        <div class="error" x-show="errorMessage" x-text="errorMessage" style="margin-top:16px;"></div>
+    </div>
+
+    <!-- Результаты -->
+    <template x-if="results.length">
+        <div style="margin-top:26px;">
+            <h2>Результаты <span class="muted" x-text="'· расчёт #' + calculationId"></span></h2>
+
+            <template x-for="r in results" :key="r.bin">
+                <div class="card">
+                    <div class="result-head">
+                        <div>
+                            <strong style="font-size:16px;" x-text="r.name"></strong>
+                            <div class="badge-bin" x-text="'БИН ' + r.bin"></div>
+                        </div>
+                        <div class="muted" x-show="r.years_used && r.years_used.length"
+                             x-text="'Годы: ' + r.years_used.join(', ')"></div>
+                    </div>
+
+                    <template x-if="r.error">
+                        <div class="error" style="margin-top:12px;" x-text="r.error"></div>
+                    </template>
+
+                    <div x-show="r.warnings && r.warnings.length" style="margin-top:12px;">
+                        <template x-for="w in r.warnings" :key="w">
+                            <div class="warn" x-text="w"></div>
+                        </template>
+                    </div>
+
+                    <template x-if="!r.error">
+                        <div>
+                            <div class="metrics">
+                                <div class="metric">
+                                    <div class="lbl">Доход</div>
+                                    <div class="val" x-text="fmt(r.revenue_percent) + ' %'"></div>
+                                    <div class="ind">Индикатор: <strong x-text="fmt(r.revenue_indicator)"></strong></div>
+                                    <span class="pill" x-show="r.revenue_cap_applied">применено ограничение</span>
+                                </div>
+                                <div class="metric">
+                                    <div class="lbl">Налоги</div>
+                                    <div class="val" x-text="fmt(r.taxes_percent) + ' %'"></div>
+                                    <div class="ind">Индикатор: <strong x-text="fmt(r.taxes_indicator)"></strong></div>
+                                    <span class="pill" x-show="r.taxes_cap_applied">применено ограничение</span>
+                                </div>
+                                <div class="metric">
+                                    <div class="lbl">ФОТ</div>
+                                    <div class="val" x-text="fmt(r.payroll_percent) + ' %'"></div>
+                                    <div class="ind">Индикатор: <strong x-text="fmt(r.payroll_indicator)"></strong></div>
+                                    <span class="pill" x-show="r.payroll_cap_applied">применено ограничение</span>
+                                </div>
+                            </div>
+
+                            <div class="pfu-box">
+                                <div>
+                                    <div class="lab">Итоговый ПФУ</div>
+                                    <div class="raw">До ограничения: <span x-text="fmt(r.pfu_raw)"></span><span x-show="r.pfu_cap_applied"> · применено ограничение</span></div>
+                                </div>
+                                <div class="num" x-text="fmt(r.pfu_final) + ' %'"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <div style="margin-top:16px;">
+                <button class="btn secondary" @click="exportExcel()">⬇ Экспорт в Excel</button>
+            </div>
+        </div>
+    </template>
+
+    <!-- История -->
+    <div style="margin-top:42px;">
+        <div class="toolbar" style="margin-bottom:14px;">
+            <h2 style="margin:0;">История расчётов</h2>
+            <div class="spacer"></div>
+            <button class="btn ghost sm" @click="loadHistory()">Обновить</button>
+        </div>
+
+        <div class="card" style="padding:6px 8px;" x-show="historyItems.length">
+            <table>
+                <thead>
+                    <tr><th>Дата и время</th><th>Сумма, ₸</th><th>Компаний</th><th>Экспорт</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="h in historyItems" :key="h.id">
+                        <tr>
+                            <td x-text="h.created_at"></td>
+                            <td x-text="Number(h.amount).toLocaleString('ru-RU')"></td>
+                            <td x-text="h.companies_count"></td>
+                            <td><a class="btn ghost sm" :href="'/export/' + h.id">Скачать</a></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        <div class="empty" x-show="!historyItems.length">Расчётов пока нет.</div>
+    </div>
+</div>
+
+<script>
+function calculator() {
+    return {
+        mrp: 4325,
+        amount: null,
+        results: [],
+        calculationId: null,
+        errorMessage: '',
+        loading: false,
+        historyItems: [],
+        tom: null,
+        companiesLoaded: false,
+        companiesError: '',
+        companiesCount: 0,
+
+        async init() {
+            try {
+                const resp = await fetch('/companies');
+                const companies = await resp.json();
+                this.companiesCount = companies.length;
+                this.tom = new TomSelect('#companies', {
+                    options: companies,
+                    valueField: 'bin',
+                    labelField: 'name',
+                    searchField: ['name', 'bin'],
+                    maxOptions: 1000,
+                    plugins: ['remove_button'],
+                    render: {
+                        option: (d, esc) =>
+                            `<div><div>${esc(d.name)}</div><div style="font-size:12px;color:#6b7280">БИН ${esc(d.bin)}</div></div>`,
+                    },
+                });
+                this.companiesLoaded = true;
+            } catch (e) {
+                this.companiesError = 'Не удалось загрузить список компаний';
+            }
+            this.loadHistory();
+        },
+
+        fmt(v) {
+            if (v === null || v === undefined) return '—';
+            return Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        },
+
+        async calculate() {
+            this.errorMessage = '';
+            const bins = this.tom ? this.tom.getValue() : [];
+            if (!this.amount || this.amount <= 0) { this.errorMessage = 'Введите сумму больше нуля.'; return; }
+            if (!bins.length) { this.errorMessage = 'Выберите хотя бы одну компанию.'; return; }
+
+            this.loading = true;
+            try {
+                const resp = await fetch('/calculate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount: this.amount, company_bins: bins }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    this.errorMessage = (data.detail && typeof data.detail === 'string')
+                        ? data.detail : 'Ошибка расчёта. Проверьте введённые данные.';
+                    this.results = [];
+                    return;
+                }
+                this.results = data.results;
+                this.calculationId = data.calculation_id;
+                this.loadHistory();
+            } catch (e) {
+                this.errorMessage = 'Ошибка соединения с сервером.';
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        exportExcel() {
+            if (this.calculationId) window.location = '/export/' + this.calculationId;
+        },
+
+        async loadHistory() {
+            try {
+                const resp = await fetch('/history');
+                if (resp.ok) this.historyItems = await resp.json();
+            } catch (e) { /* история не критична */ }
+        },
+    };
+}
+</script>
+{% endblock %}

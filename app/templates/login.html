@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Вход — Калькулятор ПФУ{% endblock %}
+{% block content %}
+<div style="max-width:380px; margin: 6vh auto 0;">
+    <div class="card">
+        <h1 style="font-size:22px;">Вход в систему</h1>
+        <p class="subtitle" style="margin-bottom:20px;">Калькулятор ПФУ · BI Group</p>
+
+        {% if error %}
+        <div class="error" style="margin-bottom:16px;">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" action="/login">
+            <label for="username">Логин</label>
+            <input id="username" name="username" type="text" autocomplete="username"
+                   value="{{ username or '' }}" required autofocus>
+
+            <label for="password" style="margin-top:14px;">Пароль</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+            <button class="btn" type="submit" style="width:100%; justify-content:center; margin-top:20px;">
+                Войти
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

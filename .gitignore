@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Окружение
+.env
+
+# База данных
+pfu.db
+*.db
+
+# Экспорты
+exports/*
+!exports/.gitkeep
+
+# Данные импорта — не коммитим (загрузка через страницу администрирования).
+data/import/*.xlsx
+Данные для расчета.xlsx
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
