@@ -90,7 +90,8 @@ async def test_calculate_ok(client: AsyncClient) -> None:
     assert data["calculation_id"] >= 1
     assert data["amount_mrp"] == pytest.approx(5_000_000_000 / MRP)
     r = data["results"][0]
-    assert r["pfu_final"] == pytest.approx(9.4)
+    # revenue 5.0 + taxes (5-3)*5=10.0 + payroll 3.4 = 18.4
+    assert r["pfu_final"] == pytest.approx(18.4)
     assert r["years_used"] == [2022, 2023, 2024]
 
 

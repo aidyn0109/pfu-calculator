@@ -4,11 +4,10 @@
 исправляется calculator, а не тест.
 
 Примечание по капам ПФУ: сумма индивидуальных капов в каждом диапазоне
-(200+60+100=360; 500+60+100=660; 700+60+100=860) на 5 меньше
-соответствующего PFU_cap (365/665/865). Поэтому PFU_cap математически
-никогда не может «сработать» при текущих формулах — это потолок-предохранитель.
-Тесты PFU-капа проверяют корректность ВЫБОРА капа по диапазону S_mrp и то,
-что pfu_final = min(pfu_raw, pfu_cap).
+(200+65+100=365; 500+65+100=665; 700+65+100=865) РАВНА соответствующему
+PFU_cap (365/665/865). Поэтому PFU_raw может достичь PFU_cap, но не превысить
+его, и pfu_final = min(pfu_raw, pfu_cap). Тесты PFU-капа проверяют корректность
+ВЫБОРА капа по диапазону S_mrp и равенство pfu_final = min(pfu_raw, pfu_cap).
 """
 
 from __future__ import annotations
@@ -72,15 +71,17 @@ def test_basic_calculation() -> None:
     assert r["revenue_cap_applied"] is False
 
     assert r["taxes_percent"] == pytest.approx(5.0)
-    assert r["taxes_indicator"] == pytest.approx(1.0)
+    # Taxes_indicator = ((5 - 3) / 0.1) * 0.5 = 10.0
+    assert r["taxes_indicator"] == pytest.approx(10.0)
     assert r["taxes_cap_applied"] is False
 
     assert r["payroll_percent"] == pytest.approx(10.0)
     assert r["payroll_indicator"] == pytest.approx(3.4)
     assert r["payroll_cap_applied"] is False
 
-    assert r["pfu_raw"] == pytest.approx(9.4)
-    assert r["pfu_final"] == pytest.approx(9.4)
+    # PFU_raw = 5.0 + 10.0 + 3.4 = 18.4
+    assert r["pfu_raw"] == pytest.approx(18.4)
+    assert r["pfu_final"] == pytest.approx(18.4)
     assert r["pfu_cap_applied"] is False
 
 
@@ -134,16 +135,16 @@ def test_revenue_cap_not_applied() -> None:
     assert r["revenue_indicator"] == pytest.approx(5.0)
 
 
-def test_taxes_cap_60() -> None:
-    """Taxes_indicator ограничен 60%."""
+def test_taxes_cap_65() -> None:
+    """Taxes_indicator ограничен 65%."""
     company = make_company(
         revenue_2022=1_000_000_000,  # Revenue_sum = 1e9
-        taxes_2022=2_000_000_000,  # Taxes% = 200% → индикатор раw 98.5 > 60
+        taxes_2022=2_000_000_000,  # Taxes% = 200% → индикатор раw 985 > 65
         payroll_2022=1_000_000,
     )
     r = calculate_pfu(company, S_RANGE1)
     assert r["taxes_cap_applied"] is True
-    assert r["taxes_indicator"] == pytest.approx(60.0)
+    assert r["taxes_indicator"] == pytest.approx(65.0)
 
 
 def test_payroll_cap_100() -> None:
@@ -163,14 +164,14 @@ def test_pfu_cap_365() -> None:
     s_mrp = S_RANGE1 / MRP
     assert _cap_for(s_mrp, PFU_CAPS, PFU_CAP_ABOVE_MAX) == 365.0
 
-    # Максимизируем все показатели — pfu_raw достигает теоретического максимума 360.
+    # Максимизируем все показатели — pfu_raw достигает максимума 200+65+100=365.
     company = make_company(
         revenue_2022=30_000_000_000,  # revenue_indicator → 200 (cap)
-        taxes_2022=2_000_000_000_000,  # taxes_indicator → 60 (cap)
+        taxes_2022=2_000_000_000_000,  # taxes_indicator → 65 (cap)
         payroll_2022=6_000_000_000,  # payroll_indicator → 100 (cap)
     )
     r = calculate_pfu(company, S_RANGE1)
-    assert r["pfu_raw"] == pytest.approx(360.0)
+    assert r["pfu_raw"] == pytest.approx(365.0)
     assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 365.0))
     assert r["pfu_final"] <= 365.0
 
@@ -182,11 +183,11 @@ def test_pfu_cap_665() -> None:
 
     company = make_company(
         revenue_2022=100_000_000_000,  # → 500 (cap)
-        taxes_2022=2_000_000_000_000,  # → 60 (cap)
+        taxes_2022=2_000_000_000_000,  # → 65 (cap)
         payroll_2022=20_000_000_000,  # → 100 (cap)
     )
     r = calculate_pfu(company, s)
-    assert r["pfu_raw"] == pytest.approx(660.0)
+    assert r["pfu_raw"] == pytest.approx(665.0)
     assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 665.0))
     assert r["pfu_final"] <= 665.0
 
@@ -198,11 +199,11 @@ def test_pfu_cap_865() -> None:
 
     company = make_company(
         revenue_2022=300_000_000_000,  # → 700 (cap)
-        taxes_2022=2_000_000_000_000,  # → 60 (cap)
+        taxes_2022=2_000_000_000_000,  # → 65 (cap)
         payroll_2022=40_000_000_000,  # → 100 (cap)
     )
     r = calculate_pfu(company, s)
-    assert r["pfu_raw"] == pytest.approx(860.0)
+    assert r["pfu_raw"] == pytest.approx(865.0)
     assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 865.0))
     assert r["pfu_final"] <= 865.0
 
@@ -211,15 +212,16 @@ def test_negative_indicators() -> None:
     """Отрицательные показатели не обнуляются."""
     company = make_company(
         revenue_2022=1_000_000_000,  # 20% → revenue_indicator = -15
-        taxes_2022=10_000_000,  # 1% от дохода → taxes_indicator = -1.0
+        taxes_2022=10_000_000,  # 1% от дохода → taxes_indicator = (1-3)*5 = -10.0
         payroll_2022=100_000_000,  # 2% → payroll_indicator = -4.6
     )
     r = calculate_pfu(company, S_RANGE1)
     assert r["revenue_indicator"] == pytest.approx(-15.0)
-    assert r["taxes_indicator"] == pytest.approx(-1.0)
+    assert r["taxes_indicator"] == pytest.approx(-10.0)
     assert r["payroll_indicator"] == pytest.approx(-4.6)
-    assert r["pfu_raw"] == pytest.approx(-20.6)
-    assert r["pfu_final"] == pytest.approx(-20.6)
+    # PFU_raw = -15 - 10 - 4.6 = -29.6
+    assert r["pfu_raw"] == pytest.approx(-29.6)
+    assert r["pfu_final"] == pytest.approx(-29.6)
 
 
 def test_revenue_sum_zero() -> None:

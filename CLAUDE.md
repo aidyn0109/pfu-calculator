@@ -199,7 +199,7 @@ REVENUE_CAPS = [
 REVENUE_CAP_ABOVE_MAX = 700.0
 
 # Капы для индивидуальных показателей
-TAXES_CAP   = 60.0   # %
+TAXES_CAP   = 65.0   # %
 PAYROLL_CAP = 100.0  # %
 
 # Диапазоны и капы для итогового ПФУ
@@ -221,7 +221,7 @@ PAYROLL_THRESHOLD  = 6.6
 REVENUE_STEP   = 0.1
 REVENUE_FACTOR = 0.05
 TAXES_STEP     = 0.1
-TAXES_FACTOR   = 0.05
+TAXES_FACTOR   = 0.5
 PAYROLL_STEP   = 0.1
 PAYROLL_FACTOR = 0.1
 
@@ -328,8 +328,8 @@ S_mrp > 3 200 000             → Revenue_cap = 700%
 #### Шаг 4 — Показатель уплаченных налогов
 ```
 Taxes_percent   = (Taxes_sum / Revenue_sum) * 100
-Taxes_indicator = ((Taxes_percent - 3) / 0.1) * 0.05
-Taxes_indicator = min(Taxes_indicator, 60%)
+Taxes_indicator = ((Taxes_percent - 3) / 0.1) * 0.5
+Taxes_indicator = min(Taxes_indicator, 65%)
 ```
 
 > Если `Revenue_sum = 0` → `Taxes_indicator = 0`, добавить предупреждение.  
@@ -556,7 +556,7 @@ test_revenue_cap_200()             # S в диапазоне [800k;1.6m] МРП 
 test_revenue_cap_500()             # S в диапазоне (1.6m;3.2m] МРП → кап 500%
 test_revenue_cap_700()             # S > 3.2m МРП → кап 700%
 test_revenue_cap_not_applied()     # Revenue_indicator < cap → фактическое
-test_taxes_cap_60()                # Taxes_indicator ограничен 60%
+test_taxes_cap_65()                # Taxes_indicator ограничен 65%
 test_payroll_cap_100()             # Payroll_indicator ограничен 100%
 test_pfu_cap_365()                 # PFU_final ограничен 365%
 test_pfu_cap_665()                 # PFU_final ограничен 665%

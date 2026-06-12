@@ -24,7 +24,7 @@ REVENUE_CAPS: list[tuple[int, int, float]] = [
 REVENUE_CAP_ABOVE_MAX: float = 700.0
 
 # --- Капы для индивидуальных показателей -------------------------------------
-TAXES_CAP: float = 60.0  # %
+TAXES_CAP: float = 65.0  # %
 PAYROLL_CAP: float = 100.0  # %
 
 # --- Диапазоны и капы для итогового ПФУ --------------------------------------
@@ -46,7 +46,7 @@ PAYROLL_THRESHOLD: float = 6.6
 REVENUE_STEP: float = 0.1
 REVENUE_FACTOR: float = 0.05
 TAXES_STEP: float = 0.1
-TAXES_FACTOR: float = 0.05
+TAXES_FACTOR: float = 0.5
 PAYROLL_STEP: float = 0.1
 PAYROLL_FACTOR: float = 0.1
 
