@@ -19,14 +19,17 @@ class Company(Base):
     revenue_2022: Mapped[float | None] = mapped_column(Float, nullable=True)
     revenue_2023: Mapped[float | None] = mapped_column(Float, nullable=True)
     revenue_2024: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revenue_2025: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     taxes_2022: Mapped[float | None] = mapped_column(Float, nullable=True)
     taxes_2023: Mapped[float | None] = mapped_column(Float, nullable=True)
     taxes_2024: Mapped[float | None] = mapped_column(Float, nullable=True)
+    taxes_2025: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     payroll_2022: Mapped[float | None] = mapped_column(Float, nullable=True)
     payroll_2023: Mapped[float | None] = mapped_column(Float, nullable=True)
     payroll_2024: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payroll_2025: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     imported_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp()

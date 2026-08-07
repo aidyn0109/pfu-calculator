@@ -31,6 +31,7 @@ from app.config import (
     TAXES_FACTOR,
     TAXES_STEP,
     TAXES_THRESHOLD,
+    YEARS,
 )
 from app.models.company import CompanyData
 
@@ -104,7 +105,7 @@ def calculate_pfu(company: CompanyData, amount: float) -> dict[str, Any]:
         }
 
     warnings: list[str] = []
-    missing_years = [y for y in (2022, 2023, 2024) if y not in years_used]
+    missing_years = [y for y in YEARS if y not in years_used]
     if missing_years:
         warnings.append(
             "Отсутствуют данные за "

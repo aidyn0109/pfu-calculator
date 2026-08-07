@@ -23,14 +23,17 @@ class CompanyData:
     revenue_2022: Optional[float] = None
     revenue_2023: Optional[float] = None
     revenue_2024: Optional[float] = None
+    revenue_2025: Optional[float] = None
 
     taxes_2022: Optional[float] = None
     taxes_2023: Optional[float] = None
     taxes_2024: Optional[float] = None
+    taxes_2025: Optional[float] = None
 
     payroll_2022: Optional[float] = None
     payroll_2023: Optional[float] = None
     payroll_2024: Optional[float] = None
+    payroll_2025: Optional[float] = None
 
     # --- Доступ к значениям по году ------------------------------------------
     def revenue_by_year(self) -> dict[int, Optional[float]]:

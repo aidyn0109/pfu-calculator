@@ -20,6 +20,7 @@ from app.config import (
     PFU_CAPS,
     REVENUE_CAP_ABOVE_MAX,
     REVENUE_CAPS,
+    YEARS,
 )
 from app.core.calculator import (
     AmountValidationError,
@@ -53,35 +54,40 @@ def test_basic_calculation() -> None:
     company = make_company(
         revenue_2022=1_000_000_000,
         revenue_2023=1_000_000_000,
-        revenue_2024=1_000_000_000,  # Revenue_sum = 3e9
+        revenue_2024=1_000_000_000,
+        revenue_2025=1_000_000_000,  # Revenue_sum = 4e9
         taxes_2022=50_000_000,
         taxes_2023=50_000_000,
-        taxes_2024=50_000_000,  # Taxes_sum = 1.5e8
+        taxes_2024=50_000_000,
+        taxes_2025=50_000_000,  # Taxes_sum = 2e8
         payroll_2022=200_000_000,
         payroll_2023=200_000_000,
-        payroll_2024=100_000_000,  # Payroll_sum = 5e8
+        payroll_2024=100_000_000,
+        payroll_2025=100_000_000,  # Payroll_sum = 6e8
     )
     r = calculate_pfu(company, S_RANGE1)
 
-    assert r["years_used"] == [2022, 2023, 2024]
+    assert r["years_used"] == list(YEARS)
     assert r["warnings"] == []
 
-    assert r["revenue_percent"] == pytest.approx(60.0)
-    assert r["revenue_indicator"] == pytest.approx(5.0)
+    # Revenue_sum 4e9 / S 5e9 = 80% → indicator = ((80-50)/0.1)*0.05 = 15.0
+    assert r["revenue_percent"] == pytest.approx(80.0)
+    assert r["revenue_indicator"] == pytest.approx(15.0)
     assert r["revenue_cap_applied"] is False
 
+    # Taxes_sum 2e8 / Revenue_sum 4e9 = 5% → indicator = ((5-3)/0.1)*0.5 = 10.0
     assert r["taxes_percent"] == pytest.approx(5.0)
-    # Taxes_indicator = ((5 - 3) / 0.1) * 0.5 = 10.0
     assert r["taxes_indicator"] == pytest.approx(10.0)
     assert r["taxes_cap_applied"] is False
 
-    assert r["payroll_percent"] == pytest.approx(10.0)
-    assert r["payroll_indicator"] == pytest.approx(3.4)
+    # Payroll_sum 6e8 / S 5e9 = 12% → indicator = ((12-6.6)/0.1)*0.1 = 5.4
+    assert r["payroll_percent"] == pytest.approx(12.0)
+    assert r["payroll_indicator"] == pytest.approx(5.4)
     assert r["payroll_cap_applied"] is False
 
-    # PFU_raw = 5.0 + 10.0 + 3.4 = 18.4
-    assert r["pfu_raw"] == pytest.approx(18.4)
-    assert r["pfu_final"] == pytest.approx(18.4)
+    # PFU_raw = 15.0 + 10.0 + 5.4 = 30.4
+    assert r["pfu_raw"] == pytest.approx(30.4)
+    assert r["pfu_final"] == pytest.approx(30.4)
     assert r["pfu_cap_applied"] is False
 
 
@@ -240,23 +246,26 @@ def test_revenue_sum_zero() -> None:
 
 
 def test_missing_one_year() -> None:
-    """Один год NULL → предупреждение, расчёт по двум оставшимся годам."""
+    """Один год NULL → предупреждение, расчёт по трём оставшимся годам."""
     company = make_company(
         revenue_2022=1_000_000_000,
         revenue_2023=1_000_000_000,
-        revenue_2024=None,  # 2024 отсутствует целиком
+        revenue_2024=1_000_000_000,
+        revenue_2025=None,  # 2025 отсутствует целиком
         taxes_2022=50_000_000,
         taxes_2023=50_000_000,
-        taxes_2024=None,
+        taxes_2024=50_000_000,
+        taxes_2025=None,
         payroll_2022=200_000_000,
         payroll_2023=200_000_000,
-        payroll_2024=None,
+        payroll_2024=100_000_000,
+        payroll_2025=None,
     )
     r = calculate_pfu(company, S_RANGE1)
-    assert r["years_used"] == [2022, 2023]
-    assert any("2024" in w for w in r["warnings"])
-    # Revenue_sum = 2e9 → 40% → индикатор = -5.0 (отрицательный допустим)
-    assert r["revenue_percent"] == pytest.approx(40.0)
+    assert r["years_used"] == [2022, 2023, 2024]
+    assert any(str(YEARS[-1]) in w for w in r["warnings"])  # предупреждение о 2025
+    # Revenue_sum = 3e9 → 60% → индикатор = 5.0
+    assert r["revenue_percent"] == pytest.approx(60.0)
 
 
 def test_all_years_missing() -> None:

@@ -14,7 +14,7 @@
             Выберите файл <code>.xlsx</code> с компаниями и загрузите его. Существующие компании
             обновятся, новые добавятся (по БИН). Старые компании не удаляются.
             Ожидаемые колонки: <code>БИН ТОО</code>, <code>Наименование ТОО</code>,
-            <code>Доходы / Уплаченные налоги / ФОТ</code> за 2022–2024.
+            <code>Доходы / Уплаченные налоги / ФОТ</code> за 2022–2025.
         </p>
 
         <div class="toolbar">
@@ -69,7 +69,7 @@
             <template x-for="metric in metrics" :key="metric.key">
                 <div style="margin-bottom:10px;">
                     <label x-text="metric.label + ' по годам'"></label>
-                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
                         <template x-for="year in years" :key="year">
                             <input type="number" step="any" :placeholder="year"
                                    x-model.number="form[metric.key + '_' + year]">
@@ -129,7 +129,7 @@
 <script>
 function admin() {
     return {
-        years: [2022, 2023, 2024],
+        years: [2022, 2023, 2024, 2025],
         metrics: [
             { key: 'revenue', label: 'Доходы' },
             { key: 'taxes', label: 'Уплаченные налоги' },

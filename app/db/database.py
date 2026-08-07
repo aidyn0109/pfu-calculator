@@ -28,9 +28,42 @@ async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Создать таблицы при старте, если их ещё нет."""
+    """Создать таблицы при старте, если их ещё нет, и мигрировать колонки."""
     # Импортируем модели, чтобы они зарегистрировались в метаданных Base.
     from app.db import models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _migrate_columns(conn)
+
+
+async def _migrate_columns(conn) -> None:
+    """Добавить недостающие колонки в существующую таблицу companies.
+
+    Безопасная миграция: ALTER TABLE ADD COLUMN IF NOT EXISTS (или обёртка
+    try/except для диалектов, которые этого не поддерживают). Позволяет
+    обновить БД на новую схему без потери данных.
+    """
+    import logging
+
+    from sqlalchemy import text
+
+    from app.config import YEARS
+
+    logger = logging.getLogger(__name__)
+    new_years = [y for y in YEARS if y >= 2025]  # колонки, которых могло не быть
+
+    if not new_years:
+        return
+
+    for year in new_years:
+        for prefix in ("revenue", "taxes", "payroll"):
+            col = f"{prefix}_{year}"
+            try:
+                await conn.execute(
+                    text(f"ALTER TABLE companies ADD COLUMN {col} FLOAT")
+                )
+                logger.info("Миграция: добавлена колонка %s", col)
+            except Exception:
+                # Колонка уже существует (или диалект не поддерживает IF NOT EXISTS).
+                pass

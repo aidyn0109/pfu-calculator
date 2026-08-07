@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.routes import router
 from app.auth import require_admin, require_login
-from app.config import IMPORT_FILE_PATH, MRP
+from app.config import IMPORT_FILE_PATH, MRP, YEARS
 from app.data.cache import CompanyCache
 from app.db.companies import upsert_companies
 from app.db.database import Base
@@ -43,12 +43,15 @@ async def client(tmp_path):
                     "revenue_2022": 1_000_000_000,
                     "revenue_2023": 1_000_000_000,
                     "revenue_2024": 1_000_000_000,
+                    "revenue_2025": 1_000_000_000,
                     "taxes_2022": 50_000_000,
                     "taxes_2023": 50_000_000,
                     "taxes_2024": 50_000_000,
+                    "taxes_2025": 50_000_000,
                     "payroll_2022": 200_000_000,
                     "payroll_2023": 200_000_000,
                     "payroll_2024": 100_000_000,
+                    "payroll_2025": 100_000_000,
                 }
             ],
         )
@@ -90,9 +93,9 @@ async def test_calculate_ok(client: AsyncClient) -> None:
     assert data["calculation_id"] >= 1
     assert data["amount_mrp"] == pytest.approx(5_000_000_000 / MRP)
     r = data["results"][0]
-    # revenue 5.0 + taxes (5-3)*5=10.0 + payroll 3.4 = 18.4
-    assert r["pfu_final"] == pytest.approx(18.4)
-    assert r["years_used"] == [2022, 2023, 2024]
+    # revenue 15.0 + taxes 10.0 + payroll 5.4 = 30.4 (с 2025 годом)
+    assert r["pfu_final"] == pytest.approx(30.4)
+    assert r["years_used"] == list(YEARS)
 
 
 async def test_calculate_below_minimum(client: AsyncClient) -> None:

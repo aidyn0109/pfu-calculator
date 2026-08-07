@@ -29,12 +29,15 @@ _UPSERT_COLUMNS = (
     "revenue_2022",
     "revenue_2023",
     "revenue_2024",
+    "revenue_2025",
     "taxes_2022",
     "taxes_2023",
     "taxes_2024",
+    "taxes_2025",
     "payroll_2022",
     "payroll_2023",
     "payroll_2024",
+    "payroll_2025",
 )
 
 

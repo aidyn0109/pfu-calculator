@@ -56,9 +56,9 @@ def test_read_excel_real_file() -> None:
         for prefix in ("revenue", "taxes", "payroll"):
             for year in (2022, 2023, 2024):
                 key = f"{prefix}_{year}"
-                assert key in row
+                assert key in row, f"Отсутствует колонка {key} в строке"
                 value = row[key]
-                assert value is None or isinstance(value, float)
+                assert value is None or isinstance(value, float), f"Некорректное значение {key}: {value!r}"
 
 
 def test_read_excel_missing_file() -> None:

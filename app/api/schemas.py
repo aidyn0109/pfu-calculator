@@ -25,12 +25,15 @@ class CompanyFull(BaseModel):
     revenue_2022: Optional[float] = None
     revenue_2023: Optional[float] = None
     revenue_2024: Optional[float] = None
+    revenue_2025: Optional[float] = None
     taxes_2022: Optional[float] = None
     taxes_2023: Optional[float] = None
     taxes_2024: Optional[float] = None
+    taxes_2025: Optional[float] = None
     payroll_2022: Optional[float] = None
     payroll_2023: Optional[float] = None
     payroll_2024: Optional[float] = None
+    payroll_2025: Optional[float] = None
 
     model_config = {"from_attributes": True}
 
@@ -43,12 +46,15 @@ class CompanyInput(BaseModel):
     revenue_2022: Optional[float] = None
     revenue_2023: Optional[float] = None
     revenue_2024: Optional[float] = None
+    revenue_2025: Optional[float] = None
     taxes_2022: Optional[float] = None
     taxes_2023: Optional[float] = None
     taxes_2024: Optional[float] = None
+    taxes_2025: Optional[float] = None
     payroll_2022: Optional[float] = None
     payroll_2023: Optional[float] = None
     payroll_2024: Optional[float] = None
+    payroll_2025: Optional[float] = None
 
 
 class CompanyUpdate(BaseModel):
@@ -58,12 +64,15 @@ class CompanyUpdate(BaseModel):
     revenue_2022: Optional[float] = None
     revenue_2023: Optional[float] = None
     revenue_2024: Optional[float] = None
+    revenue_2025: Optional[float] = None
     taxes_2022: Optional[float] = None
     taxes_2023: Optional[float] = None
     taxes_2024: Optional[float] = None
+    taxes_2025: Optional[float] = None
     payroll_2022: Optional[float] = None
     payroll_2023: Optional[float] = None
     payroll_2024: Optional[float] = None
+    payroll_2025: Optional[float] = None
 
 
 # --- Расчёт ------------------------------------------------------------------
