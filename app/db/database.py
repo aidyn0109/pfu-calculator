@@ -17,8 +17,16 @@ class Base(DeclarativeBase):
     """Базовый класс для всех ORM-моделей."""
 
 
+# Для PostgreSQL через pgbouncer (Supabase) отключаем кеш prepared statements.
+# SQLite этот параметр игнорирует.
+_connect_args: dict[str, object] = {}
+if "postgresql" in DATABASE_URL:
+    _connect_args["statement_cache_size"] = 0
+
 # Единый async-движок и фабрика сессий на всё приложение.
-engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=False, future=True)
+engine: AsyncEngine = create_async_engine(
+    DATABASE_URL, echo=False, future=True, connect_args=_connect_args
+)
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     bind=engine,
