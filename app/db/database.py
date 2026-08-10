@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from app.config import DATABASE_URL
 
@@ -17,17 +18,16 @@ class Base(DeclarativeBase):
     """Базовый класс для всех ORM-моделей."""
 
 
-# Для PostgreSQL через pgbouncer (Supabase) отключаем кеш prepared statements.
-# Параметр statement_cache_size=0 должен быть int (не строка), поэтому передаём
-# через connect_args, а не query-строкой URL.
-_connect_args: dict[str, object] = {}
+# Для PostgreSQL через pgbouncer (Supabase) используем NullPool и отключаем
+# кеш prepared statements. Pgbouncer в режиме transaction не поддерживает
+# prepared statements — каждое соединение через NullPool свежее.
+_engine_kwargs: dict[str, object] = {"echo": False, "future": True}
 if "postgresql" in DATABASE_URL:
-    _connect_args["statement_cache_size"] = 0
+    _engine_kwargs["poolclass"] = NullPool
+    _engine_kwargs["connect_args"] = {"statement_cache_size": 0}
 
 # Единый async-движок и фабрика сессий на всё приложение.
-engine: AsyncEngine = create_async_engine(
-    DATABASE_URL, echo=False, future=True, connect_args=_connect_args
-)
+engine: AsyncEngine = create_async_engine(DATABASE_URL, **_engine_kwargs)  # type: ignore[arg-type]
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     bind=engine,
