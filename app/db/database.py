@@ -64,7 +64,7 @@ async def init_db() -> None:
 
 
 async def _migrate_columns() -> None:
-    """Добавить недостающие колонки годов в существующую таблицу companies.
+    """Добавить недостающие колонки в существующие таблицы.
 
     Сначала читаем фактический список колонок через inspector и добавляем
     только те, которых нет, — так не полагаемся на try/except вокруг ALTER
@@ -79,21 +79,31 @@ async def _migrate_columns() -> None:
 
     logger = logging.getLogger(__name__)
 
-    async with engine.connect() as conn:
-        existing = await conn.run_sync(
-            lambda sync_conn: {
-                col["name"] for col in inspect(sync_conn).get_columns("companies")
-            }
-        )
-
-    missing = [
-        f"{prefix}_{year}"
+    # Ожидаемые колонки: (таблица, колонка, SQL-тип).
+    expected: list[tuple[str, str, str]] = [
+        ("companies", f"{prefix}_{year}", "FLOAT")
         for year in YEARS
         for prefix in ("revenue", "taxes", "payroll")
-        if f"{prefix}_{year}" not in existing
     ]
+    # Годы расчёта в истории (появились вместе с выбором года на калькуляторе).
+    expected.append(("calculations", "years", "TEXT"))
 
-    for col in missing:
+    tables = {table for table, _, _ in expected}
+    async with engine.connect() as conn:
+        existing = {
+            table: await conn.run_sync(
+                lambda sync_conn, t=table: {
+                    col["name"] for col in inspect(sync_conn).get_columns(t)
+                }
+            )
+            for table in tables
+        }
+
+    for table, col, sql_type in expected:
+        if col in existing[table]:
+            continue
         async with engine.begin() as conn:
-            await conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} FLOAT"))
-        logger.info("Миграция: добавлена колонка %s", col)
+            await conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN {col} {sql_type}")
+            )
+        logger.info("Миграция: добавлена колонка %s.%s", table, col)

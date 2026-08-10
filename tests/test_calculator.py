@@ -24,8 +24,10 @@ from app.config import (
 )
 from app.core.calculator import (
     AmountValidationError,
+    YearsValidationError,
     _cap_for,
     calculate_pfu,
+    normalize_years,
     round_half_up,
 )
 from app.models.company import CompanyData
@@ -310,6 +312,98 @@ def test_boundary_3_200_000() -> None:
     )
     r = calculate_pfu(company, s)
     assert r["revenue_indicator"] == pytest.approx(500.0)  # кап 500, не 700
+
+
+# --- Выбор годов расчёта ------------------------------------------------------
+def test_normalize_years_defaults_to_all() -> None:
+    """None и пустой список означают «все годы из config.YEARS»."""
+    assert normalize_years(None) == list(YEARS)
+    assert normalize_years([]) == list(YEARS)
+
+
+def test_normalize_years_sorts_and_dedupes() -> None:
+    """Порядок берётся из config.YEARS, дубликаты убираются."""
+    assert normalize_years([2024, 2022, 2024]) == [2022, 2024]
+
+
+def test_normalize_years_rejects_unknown() -> None:
+    """Год вне config.YEARS → ошибка валидации."""
+    with pytest.raises(YearsValidationError):
+        normalize_years([2019])
+
+
+def test_selected_years_limit_sums() -> None:
+    """Показатели суммируются только за выбранные годы."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        revenue_2023=1_000_000_000,
+        revenue_2024=1_000_000_000,
+        revenue_2025=1_000_000_000,
+        taxes_2022=50_000_000,
+        taxes_2023=50_000_000,
+        taxes_2024=50_000_000,
+        taxes_2025=50_000_000,
+        payroll_2022=200_000_000,
+        payroll_2023=200_000_000,
+        payroll_2024=100_000_000,
+        payroll_2025=100_000_000,
+    )
+    r = calculate_pfu(company, S_RANGE1, [2022, 2023])
+
+    assert r["years_used"] == [2022, 2023]
+    assert r["warnings"] == []  # оба выбранных года заполнены
+    # Revenue_sum = 2e9 / S 5e9 = 40% → индикатор = ((40-50)/0.1)*0.05 = -5.0
+    assert r["revenue_percent"] == pytest.approx(40.0)
+    assert r["revenue_indicator"] == pytest.approx(-5.0)
+    # Taxes_sum 1e8 / Revenue_sum 2e9 = 5%
+    assert r["taxes_percent"] == pytest.approx(5.0)
+    # Payroll_sum 4e8 / S 5e9 = 8%
+    assert r["payroll_percent"] == pytest.approx(8.0)
+
+
+def test_single_year_selection() -> None:
+    """Можно выбрать один год — считается только он."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        revenue_2024=4_000_000_000,
+        taxes_2024=200_000_000,
+        payroll_2024=500_000_000,
+    )
+    r = calculate_pfu(company, S_RANGE1, [2024])
+
+    assert r["years_used"] == [2024]
+    # Доход 2022 в сумму не попадает: 4e9 / 5e9 = 80%
+    assert r["revenue_percent"] == pytest.approx(80.0)
+
+
+def test_selected_year_without_data_warns() -> None:
+    """Выбранный год без данных → предупреждение, расчёт по остальным."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        taxes_2022=50_000_000,
+        payroll_2022=200_000_000,
+    )
+    r = calculate_pfu(company, S_RANGE1, [2022, 2023])
+
+    assert r["years_used"] == [2022]
+    assert any("2023" in w for w in r["warnings"])
+
+
+def test_no_data_for_selected_years() -> None:
+    """Нет данных ни за один выбранный год → ошибка по компании."""
+    company = make_company(revenue_2022=1_000_000_000)
+    r = calculate_pfu(company, S_RANGE1, [2024, 2025])
+
+    assert r["years_used"] == []
+    assert "выбранные годы" in r["error"]
+    assert "revenue_indicator" not in r
+
+
+def test_unknown_year_rejected_in_calculate() -> None:
+    """Недопустимый год отсекается и на уровне calculate_pfu."""
+    company = make_company(revenue_2022=1_000_000_000)
+    with pytest.raises(YearsValidationError):
+        calculate_pfu(company, S_RANGE1, [2030])
 
 
 def test_round_half_up() -> None:

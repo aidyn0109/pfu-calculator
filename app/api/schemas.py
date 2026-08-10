@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.config import YEARS
 
 
 # --- Компании ----------------------------------------------------------------
@@ -79,6 +81,27 @@ class CompanyUpdate(BaseModel):
 class CalculateRequest(BaseModel):
     amount: float = Field(..., gt=0, description="Сумма в тенге, строго > 0")
     company_bins: list[str] = Field(..., min_length=1)
+    # Годы расчёта. None или пустой список = все годы из config.YEARS
+    # (обратная совместимость со старыми клиентами).
+    years: Optional[list[int]] = Field(
+        default=None, description="Годы расчёта; по умолчанию — все доступные"
+    )
+
+    @field_validator("years")
+    @classmethod
+    def _check_years(cls, value: Optional[list[int]]) -> Optional[list[int]]:
+        if not value:
+            return None
+        unknown = sorted({y for y in value if y not in YEARS})
+        if unknown:
+            raise ValueError(
+                "Недопустимые годы расчёта: "
+                + ", ".join(str(y) for y in unknown)
+                + ". Доступны: "
+                + ", ".join(str(y) for y in YEARS)
+                + "."
+            )
+        return [year for year in YEARS if year in value]
 
 
 class CompanyResult(BaseModel):
@@ -111,6 +134,7 @@ class CalculateResponse(BaseModel):
     calculation_id: int
     amount: float
     amount_mrp: float
+    years: list[int]  # годы, по которым выполнялся расчёт
     results: list[CompanyResult]
 
 
@@ -122,6 +146,7 @@ class HistoryItem(BaseModel):
     amount_mrp: float
     companies_count: int
     company_bins: list[str]
+    years: list[int]
 
 
 # --- Импорт ------------------------------------------------------------------

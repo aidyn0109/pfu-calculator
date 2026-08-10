@@ -23,8 +23,10 @@ from app.config import (  # noqa: E402
     BRAND_COLOR_PRIMARY,
     IMPORT_FILE_PATH,
     LOG_LEVEL,
+    MRP,
     ROLE_ADMIN,
     SECRET_KEY,
+    YEARS,
 )
 from app.data.cache import cache  # noqa: E402
 from app.data.importer import ImportValidationError, import_from_excel  # noqa: E402
@@ -87,6 +89,8 @@ def _render(request: Request, template: str, **extra):
         "request": request,
         "brand_color": BRAND_COLOR_PRIMARY,
         "user": request.session.get("user"),
+        "years": list(YEARS),
+        "mrp": MRP,
     }
     context.update(extra)
     return templates.TemplateResponse(template, context)

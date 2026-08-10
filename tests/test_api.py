@@ -96,6 +96,46 @@ async def test_calculate_ok(client: AsyncClient) -> None:
     # revenue 15.0 + taxes 10.0 + payroll 5.4 = 30.4 (с 2025 годом)
     assert r["pfu_final"] == pytest.approx(30.4)
     assert r["years_used"] == list(YEARS)
+    # Годы не переданы → расчёт по всем.
+    assert data["years"] == list(YEARS)
+
+
+async def test_calculate_with_selected_years(client: AsyncClient) -> None:
+    """Выбранные годы применяются к расчёту и попадают в ответ и историю."""
+    resp = await client.post(
+        "/calculate",
+        json={
+            "amount": 5_000_000_000,
+            "company_bins": [SEED_BIN],
+            "years": [2024, 2022],  # намеренно не по порядку
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["years"] == [2022, 2024]  # порядок нормализован
+    assert data["results"][0]["years_used"] == [2022, 2024]
+
+    hist = await client.get("/history")
+    item = next(h for h in hist.json() if h["id"] == data["calculation_id"])
+    assert item["years"] == [2022, 2024]
+
+
+async def test_calculate_rejects_unknown_year(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/calculate",
+        json={"amount": 5_000_000_000, "company_bins": [SEED_BIN], "years": [2019]},
+    )
+    assert resp.status_code == 422
+
+
+async def test_calculate_empty_years_means_all(client: AsyncClient) -> None:
+    """Пустой список годов трактуется как «все годы» (обратная совместимость)."""
+    resp = await client.post(
+        "/calculate",
+        json={"amount": 5_000_000_000, "company_bins": [SEED_BIN], "years": []},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["years"] == list(YEARS)
 
 
 async def test_calculate_below_minimum(client: AsyncClient) -> None:

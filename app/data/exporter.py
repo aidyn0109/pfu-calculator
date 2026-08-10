@@ -14,6 +14,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.config import BRAND_COLOR_PRIMARY, DISPLAY_DECIMALS
+from app.db.calculations import years_of
 from app.db.models import Calculation
 
 _NUM_FMT = "0." + "0" * DISPLAY_DECIMALS
@@ -68,6 +69,7 @@ def build_export(calc: Calculation) -> bytes:
     # Шапка с метаданными расчёта.
     ws.append([f"Расчёт #{calc.id} от {calc.created_at}"])
     ws.append([f"Сумма: {calc.amount}", f"Сумма (МРП): {calc.amount_mrp}"])
+    ws.append(["Годы расчёта: " + ", ".join(str(y) for y in years_of(calc))])
     ws.append([])
 
     header_row_idx = ws.max_row + 1

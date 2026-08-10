@@ -21,7 +21,12 @@ from app.api.schemas import (
     ImportResponse,
 )
 from app.config import MRP
-from app.core.calculator import AmountValidationError, calculate_pfu, validate_amount
+from app.core.calculator import (
+    AmountValidationError,
+    calculate_pfu,
+    normalize_years,
+    validate_amount,
+)
 from app.data.cache import CompanyCache
 from app.data.exporter import build_export
 from app.data.importer import (
@@ -33,6 +38,7 @@ from app.db.calculations import (
     get_calculation,
     get_recent_calculations,
     save_calculation,
+    years_of,
 )
 from app.auth import require_admin, require_login
 from app.db.companies import create_company, get_all_companies, update_company
@@ -62,12 +68,15 @@ async def calculate(
     cache: CompanyCache = Depends(get_cache),
     session: AsyncSession = Depends(get_session),
 ) -> CalculateResponse:
-    """Рассчитать ПФУ по выбранным компаниям и сохранить расчёт."""
+    """Рассчитать ПФУ по выбранным компаниям и годам, сохранить расчёт."""
     # Шаг 0/1: валидация суммы (S<=0 отсекается pydantic → 422; S_mrp<min → 400).
     try:
         validate_amount(payload.amount)
     except AmountValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    # Годы уже проверены схемой; normalize_years приводит None к полному списку.
+    selected_years = normalize_years(payload.years)
 
     found, missing = cache.get_many(payload.company_bins)
     if missing:
@@ -77,7 +86,7 @@ async def calculate(
         )
 
     results: list[dict[str, Any]] = [
-        calculate_pfu(company, payload.amount) for company in found
+        calculate_pfu(company, payload.amount, selected_years) for company in found
     ]
 
     amount_mrp = payload.amount / MRP
@@ -87,12 +96,14 @@ async def calculate(
         amount_mrp=amount_mrp,
         company_bins=payload.company_bins,
         results=results,
+        years=selected_years,
     )
 
     return CalculateResponse(
         calculation_id=calc.id,
         amount=payload.amount,
         amount_mrp=amount_mrp,
+        years=selected_years,
         results=results,  # type: ignore[arg-type]
     )
 
@@ -113,6 +124,7 @@ async def history(session: AsyncSession = Depends(get_session)) -> list[HistoryI
             amount_mrp=rec.amount_mrp,
             companies_count=rec.companies_count,
             company_bins=json.loads(rec.company_bins),
+            years=years_of(rec),
         )
         for rec in records
     ]

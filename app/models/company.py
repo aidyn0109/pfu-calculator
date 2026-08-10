@@ -8,7 +8,7 @@ CompanyData используется бизнес-логикой расчёта 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 from app.config import YEARS
 
@@ -45,15 +45,23 @@ class CompanyData:
     def payroll_by_year(self) -> dict[int, Optional[float]]:
         return {year: getattr(self, f"payroll_{year}") for year in YEARS}
 
-    def years_present(self) -> list[int]:
-        """Годы, по которым есть хотя бы один из показателей (revenue/taxes/payroll)."""
+    def years_present(self, years: Optional[Sequence[int]] = None) -> list[int]:
+        """Годы, по которым есть хотя бы один из показателей (revenue/taxes/payroll).
+
+        `years` ограничивает проверку выбранными пользователем годами;
+        None означает «все годы из config.YEARS».
+        """
+        selected = YEARS if years is None else years
         revenue = self.revenue_by_year()
         taxes = self.taxes_by_year()
         payroll = self.payroll_by_year()
         return [
             year
             for year in YEARS
-            if revenue[year] is not None
-            or taxes[year] is not None
-            or payroll[year] is not None
+            if year in selected
+            and (
+                revenue[year] is not None
+                or taxes[year] is not None
+                or payroll[year] is not None
+            )
         ]

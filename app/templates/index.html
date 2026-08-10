@@ -4,7 +4,7 @@
 <div x-data="calculator()" x-init="init()">
 
     <h1>Расчёт показателя финансовой устойчивости</h1>
-    <p class="subtitle">Введите сумму и выберите компании — ПФУ рассчитывается по каждой компании отдельно.</p>
+    <p class="subtitle">Введите сумму, выберите компании и годы — ПФУ рассчитывается по каждой компании отдельно.</p>
 
     <div class="card">
         <div class="grid-2">
@@ -18,6 +18,19 @@
             <div>
                 <label for="companies">Компании <span class="hint">— поиск по названию или БИН</span></label>
                 <select id="companies" multiple placeholder="Выберите компании..."></select>
+            </div>
+        </div>
+
+        <div style="margin-top:18px;">
+            <label>Годы расчёта <span class="hint">— доходы, налоги и ФОТ суммируются только за выбранные годы</span></label>
+            <div class="chips">
+                <template x-for="y in allYears" :key="y">
+                    <button type="button" class="chip-year" :class="{ on: selectedYears.includes(y) }"
+                            :aria-pressed="selectedYears.includes(y)" @click="toggleYear(y)" x-text="y"></button>
+                </template>
+                <button type="button" class="btn ghost sm" style="margin-left:6px;"
+                        @click="selectedYears = [...allYears]"
+                        :disabled="selectedYears.length === allYears.length">Выбрать все</button>
             </div>
         </div>
 
@@ -37,7 +50,9 @@
     <!-- Результаты -->
     <template x-if="results.length">
         <div style="margin-top:26px;">
-            <h2>Результаты <span class="muted" x-text="'· расчёт #' + calculationId"></span></h2>
+            <h2>Результаты
+                <span class="muted" x-text="'· расчёт #' + calculationId + ' · годы: ' + resultYears.join(', ')"></span>
+            </h2>
 
             <template x-for="r in results" :key="r.bin">
                 <div class="card">
@@ -112,13 +127,14 @@
         <div class="card" style="padding:6px 8px;" x-show="historyItems.length">
             <table>
                 <thead>
-                    <tr><th>Дата и время</th><th>Сумма, ₸</th><th>Компаний</th><th>Экспорт</th></tr>
+                    <tr><th>Дата и время</th><th>Сумма, ₸</th><th>Годы</th><th>Компаний</th><th>Экспорт</th></tr>
                 </thead>
                 <tbody>
                     <template x-for="h in historyItems" :key="h.id">
                         <tr>
                             <td x-text="h.created_at"></td>
                             <td x-text="Number(h.amount).toLocaleString('ru-RU')"></td>
+                            <td x-text="(h.years || []).join(', ')"></td>
                             <td x-text="h.companies_count"></td>
                             <td><a class="btn ghost sm" :href="'/export/' + h.id">Скачать</a></td>
                         </tr>
@@ -133,9 +149,13 @@
 <script>
 function calculator() {
     return {
-        mrp: 4325,
+        mrp: {{ mrp }},
+        // Годы приходят из config.YEARS — не дублируем список в шаблоне.
+        allYears: {{ years | tojson }},
+        selectedYears: {{ years | tojson }},
         amount: null,
         results: [],
+        resultYears: [],
         calculationId: null,
         errorMessage: '',
         loading: false,
@@ -174,18 +194,30 @@ function calculator() {
             return Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         },
 
+        toggleYear(year) {
+            this.selectedYears = this.selectedYears.includes(year)
+                ? this.selectedYears.filter(y => y !== year)
+                // Держим порядок как в allYears, а не в порядке кликов.
+                : this.allYears.filter(y => y === year || this.selectedYears.includes(y));
+        },
+
         async calculate() {
             this.errorMessage = '';
             const bins = this.tom ? this.tom.getValue() : [];
             if (!this.amount || this.amount <= 0) { this.errorMessage = 'Введите сумму больше нуля.'; return; }
             if (!bins.length) { this.errorMessage = 'Выберите хотя бы одну компанию.'; return; }
+            if (!this.selectedYears.length) { this.errorMessage = 'Выберите хотя бы один год расчёта.'; return; }
 
             this.loading = true;
             try {
                 const resp = await fetch('/calculate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ amount: this.amount, company_bins: bins }),
+                    body: JSON.stringify({
+                        amount: this.amount,
+                        company_bins: bins,
+                        years: this.selectedYears,
+                    }),
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
@@ -195,6 +227,7 @@ function calculator() {
                     return;
                 }
                 this.results = data.results;
+                this.resultYears = data.years;
                 this.calculationId = data.calculation_id;
                 this.loadHistory();
             } catch (e) {

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from app.config import (
     DISPLAY_DECIMALS,
@@ -40,6 +40,10 @@ class AmountValidationError(ValueError):
     """Ошибка валидации суммы S (глобальная, не по конкретной компании)."""
 
 
+class YearsValidationError(ValueError):
+    """Ошибка валидации выбранных годов расчёта."""
+
+
 # --- Вспомогательные функции -------------------------------------------------
 def round_half_up(value: float, decimals: int = DISPLAY_DECIMALS) -> float:
     """Стандартное математическое округление half-up до `decimals` знаков."""
@@ -59,9 +63,31 @@ def _cap_for(s_mrp: float, caps: list[tuple[int, int, float]], above_max: float)
     return above_max
 
 
-def _sum_metric(values: dict[int, Optional[float]]) -> float:
-    """Суммировать показатель по годам, считая None (NULL) как 0."""
-    return sum(v for v in values.values() if v is not None)
+def _sum_metric(values: dict[int, Optional[float]], years: Sequence[int]) -> float:
+    """Суммировать показатель по выбранным годам, считая None (NULL) как 0."""
+    return sum(v for year, v in values.items() if year in years and v is not None)
+
+
+def normalize_years(years: Optional[Sequence[int]]) -> list[int]:
+    """Проверить и упорядочить выбранные годы расчёта.
+
+    None или пустой список означают «все годы из config.YEARS». Дубликаты
+    убираются, порядок — как в config.YEARS. Бросает YearsValidationError,
+    если передан год, по которому система не хранит данные.
+    """
+    if not years:
+        return list(YEARS)
+
+    unknown = sorted({y for y in years if y not in YEARS})
+    if unknown:
+        raise YearsValidationError(
+            "Недопустимые годы расчёта: "
+            + ", ".join(str(y) for y in unknown)
+            + ". Доступны: "
+            + ", ".join(str(y) for y in YEARS)
+            + "."
+        )
+    return [year for year in YEARS if year in years]
 
 
 def validate_amount(amount: float) -> float:
@@ -80,32 +106,42 @@ def validate_amount(amount: float) -> float:
 
 
 # --- Основной расчёт ---------------------------------------------------------
-def calculate_pfu(company: CompanyData, amount: float) -> dict[str, Any]:
-    """Рассчитать ПФУ для одной компании.
+def calculate_pfu(
+    company: CompanyData, amount: float, years: Optional[Sequence[int]] = None
+) -> dict[str, Any]:
+    """Рассчитать ПФУ для одной компании по выбранным годам.
 
     Сумма S считается уже корректной по validate_amount (вызывается отдельно
     на уровне API), но S_mrp всё равно вычисляется здесь для определения капов.
 
-    Если у компании нет данных ни за один год — возвращается результат с полем
-    `error`; остальные поля показателей отсутствуют.
+    `years` — годы, выбранные пользователем; None означает все годы из
+    config.YEARS. Показатели суммируются только по этим годам.
+
+    Если у компании нет данных ни за один выбранный год — возвращается
+    результат с полем `error`; остальные поля показателей отсутствуют.
     """
     s = amount
     s_mrp = validate_amount(amount)  # переиспользуем валидацию и расчёт S_mrp
+    selected_years = normalize_years(years)
 
-    years_used = company.years_present()
+    years_used = company.years_present(selected_years)
 
-    # Все 3 года NULL → компания исключается, ошибка по ней.
+    # Данных нет ни за один выбранный год → компания исключается, ошибка по ней.
     if not years_used:
         return {
             "bin": company.bin,
             "name": company.name,
             "years_used": [],
             "warnings": [],
-            "error": "Отсутствуют данные по компании за все годы. Расчёт невозможен.",
+            "error": (
+                "Отсутствуют данные по компании за выбранные годы ("
+                + ", ".join(str(y) for y in selected_years)
+                + "). Расчёт невозможен."
+            ),
         }
 
     warnings: list[str] = []
-    missing_years = [y for y in YEARS if y not in years_used]
+    missing_years = [y for y in selected_years if y not in years_used]
     if missing_years:
         warnings.append(
             "Отсутствуют данные за "
@@ -115,10 +151,10 @@ def calculate_pfu(company: CompanyData, amount: float) -> dict[str, Any]:
             + "."
         )
 
-    # --- Шаг 2: суммы по годам (NULL = 0) ------------------------------------
-    revenue_sum = _sum_metric(company.revenue_by_year())
-    taxes_sum = _sum_metric(company.taxes_by_year())
-    payroll_sum = _sum_metric(company.payroll_by_year())
+    # --- Шаг 2: суммы по выбранным годам (NULL = 0) --------------------------
+    revenue_sum = _sum_metric(company.revenue_by_year(), selected_years)
+    taxes_sum = _sum_metric(company.taxes_by_year(), selected_years)
+    payroll_sum = _sum_metric(company.payroll_by_year(), selected_years)
 
     # --- Шаг 3: показатель дохода --------------------------------------------
     revenue_percent = (revenue_sum / s) * 100

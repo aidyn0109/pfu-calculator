@@ -8,8 +8,19 @@ from typing import Any, Sequence
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import MAX_HISTORY_RECORDS
+from app.config import MAX_HISTORY_RECORDS, YEARS
 from app.db.models import Calculation
+
+
+def years_of(calc: Calculation) -> list[int]:
+    """Годы расчёта записи истории.
+
+    У записей, созданных до появления выбора года, колонка пустая — такие
+    расчёты выполнялись по всем годам.
+    """
+    if not calc.years:
+        return list(YEARS)
+    return list(json.loads(calc.years))
 
 
 async def save_calculation(
@@ -19,6 +30,7 @@ async def save_calculation(
     amount_mrp: float,
     company_bins: Sequence[str],
     results: list[dict[str, Any]],
+    years: Sequence[int] | None = None,
 ) -> Calculation:
     """Сохранить расчёт и обрезать историю до MAX_HISTORY_RECORDS."""
     calc = Calculation(
@@ -27,6 +39,7 @@ async def save_calculation(
         company_bins=json.dumps(list(company_bins), ensure_ascii=False),
         results=json.dumps(results, ensure_ascii=False),
         companies_count=len(results),
+        years=json.dumps(list(years if years is not None else YEARS)),
     )
     session.add(calc)
     await session.commit()

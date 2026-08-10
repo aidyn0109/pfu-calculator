@@ -48,3 +48,6 @@ class Calculation(Base):
     company_bins: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
     results: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
     companies_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # JSON array годов расчёта. NULL в записях, созданных до появления выбора
+    # года, — они трактуются как «все годы» (см. app/db/calculations.py).
+    years: Mapped[str | None] = mapped_column(Text, nullable=True)
