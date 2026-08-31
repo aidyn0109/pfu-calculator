@@ -22,6 +22,7 @@ from app.config import (
     PFU_CAP_ABOVE_MAX,
     PFU_CAPS,
     REVENUE_CAP_ABOVE_MAX,
+    REVENUE_CAP_BELOW_MIN,
     REVENUE_CAPS,
     REVENUE_FACTOR,
     REVENUE_STEP,
@@ -50,17 +51,25 @@ def round_half_up(value: float, decimals: int = DISPLAY_DECIMALS) -> float:
     return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))
 
 
-def _cap_for(s_mrp: float, caps: list[tuple[int, int, float]], above_max: float) -> float:
+def _cap_for(
+    s_mrp: float,
+    caps: list[tuple[int, int, float]],
+    above_max: float,
+    below_min: Optional[float] = None,
+) -> float:
     """Вернуть кап по диапазону S_mrp. Диапазоны проверяются по порядку.
 
-    Верхние границы включительны, поэтому значение на стыке (например
-    1 600 000) попадает в нижний диапазон. Нижняя граница первого диапазона
-    (800 000 МРП) больше не отсекает суммы: расчёт разрешён и для меньших
-    сумм — они получают кап самого нижнего уровня (200% / 365%).
+    Границы включительны с обеих сторон; благодаря порядку проверки значение
+    на стыке (например 1 600 000) попадает в нижний диапазон.
+
+    Суммы ниже нижней границы первого диапазона (800 000 МРП) не отклоняются:
+    им назначается `below_min`, а если он не задан — кап первого диапазона.
     """
-    for _lo, hi, cap in caps:
-        if s_mrp <= hi:
+    for lo, hi, cap in caps:
+        if lo <= s_mrp <= hi:
             return cap
+    if caps and s_mrp < caps[0][0]:
+        return caps[0][2] if below_min is None else below_min
     return above_max
 
 
@@ -160,7 +169,9 @@ def calculate_pfu(
     revenue_indicator_raw = (
         (revenue_percent - REVENUE_THRESHOLD) / REVENUE_STEP
     ) * REVENUE_FACTOR
-    revenue_cap = _cap_for(s_mrp, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX)
+    revenue_cap = _cap_for(
+        s_mrp, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX, REVENUE_CAP_BELOW_MIN
+    )
     revenue_cap_applied = revenue_indicator_raw > revenue_cap
     revenue_indicator = min(revenue_indicator_raw, revenue_cap)
 

@@ -146,8 +146,8 @@ async def test_calculate_below_800k_mrp_succeeds(client: AsyncClient) -> None:
     assert resp.status_code == 200
     result = resp.json()["results"][0]
     assert "error" not in result or result["error"] is None
-    # Нижний уровень капов: 200% / 365%.
-    assert result["revenue_indicator"] == 200.0
+    # Нижний уровень: Revenue_cap = 100%, PFU_cap = 365%.
+    assert result["revenue_indicator"] == 100.0
     assert result["pfu_final"] <= 365.0
 
 

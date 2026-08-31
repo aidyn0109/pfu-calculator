@@ -19,6 +19,7 @@ from app.config import (
     PFU_CAP_ABOVE_MAX,
     PFU_CAPS,
     REVENUE_CAP_ABOVE_MAX,
+    REVENUE_CAP_BELOW_MIN,
     REVENUE_CAPS,
     YEARS,
 )
@@ -302,13 +303,24 @@ def test_s_below_800k_mrp_allowed() -> None:
     assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 365.0))
 
 
-def test_caps_below_800k_use_lowest_tier() -> None:
-    """Ниже 800 000 МРП действует нижний уровень капов: 200% и 365%."""
-    assert _cap_for(100_000, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX) == 200.0
-    assert _cap_for(100_000, PFU_CAPS, PFU_CAP_ABOVE_MAX) == 365.0
-    assert _cap_for(0.5, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX) == 200.0
+def test_revenue_cap_below_800k_is_100() -> None:
+    """Ниже 800 000 МРП Revenue_cap = 100%, PFU_cap остаётся 365%."""
+    for s_mrp in (0.5, 100_000, 799_999):
+        assert (
+            _cap_for(
+                s_mrp, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX, REVENUE_CAP_BELOW_MIN
+            )
+            == 100.0
+        )
+        assert _cap_for(s_mrp, PFU_CAPS, PFU_CAP_ABOVE_MAX) == 365.0
 
-    # Кап действительно применяется, а не пропускается (иначе было бы 700%).
+    # Ровно 800 000 МРП — уже базовый уровень, а не нижний.
+    assert (
+        _cap_for(800_000, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX, REVENUE_CAP_BELOW_MIN)
+        == 200.0
+    )
+
+    # Кап действительно применяется в расчёте.
     s = s_for_mrp(100_000)
     company = make_company(
         revenue_2022=200_000_000_000,  # индикатор заведомо > 700
@@ -317,7 +329,7 @@ def test_caps_below_800k_use_lowest_tier() -> None:
     )
     r = calculate_pfu(company, s)
     assert r["revenue_cap_applied"] is True
-    assert r["revenue_indicator"] == 200.0
+    assert r["revenue_indicator"] == 100.0
     assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 365.0))
 
 
