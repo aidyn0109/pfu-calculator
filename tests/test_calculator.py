@@ -279,13 +279,46 @@ def test_all_years_missing() -> None:
     assert "revenue_indicator" not in r
 
 
-def test_s_below_minimum() -> None:
-    """S_mrp < 800 000 и S <= 0 → ошибка валидации."""
+def test_amount_must_be_positive() -> None:
+    """S <= 0 → ошибка валидации (единственное ограничение по сумме)."""
     company = make_company(revenue_2022=1_000_000_000)
     with pytest.raises(AmountValidationError):
-        calculate_pfu(company, 1_000_000)  # S_mrp ≈ 231
-    with pytest.raises(AmountValidationError):
         calculate_pfu(company, 0)
+    with pytest.raises(AmountValidationError):
+        calculate_pfu(company, -1)
+
+
+def test_s_below_800k_mrp_allowed() -> None:
+    """S_mrp < 800 000 больше не отклоняется — расчёт выполняется."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        taxes_2022=100_000_000,
+        payroll_2022=50_000_000,
+    )
+    s = s_for_mrp(100_000)  # S_mrp = 100 000, заведомо ниже прежнего порога
+    r = calculate_pfu(company, s)
+    assert "error" not in r
+    assert r["revenue_percent"] == pytest.approx(1_000_000_000 / s * 100)
+    assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 365.0))
+
+
+def test_caps_below_800k_use_lowest_tier() -> None:
+    """Ниже 800 000 МРП действует нижний уровень капов: 200% и 365%."""
+    assert _cap_for(100_000, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX) == 200.0
+    assert _cap_for(100_000, PFU_CAPS, PFU_CAP_ABOVE_MAX) == 365.0
+    assert _cap_for(0.5, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX) == 200.0
+
+    # Кап действительно применяется, а не пропускается (иначе было бы 700%).
+    s = s_for_mrp(100_000)
+    company = make_company(
+        revenue_2022=200_000_000_000,  # индикатор заведомо > 700
+        taxes_2022=1_000_000,
+        payroll_2022=1_000_000,
+    )
+    r = calculate_pfu(company, s)
+    assert r["revenue_cap_applied"] is True
+    assert r["revenue_indicator"] == 200.0
+    assert r["pfu_final"] == pytest.approx(min(r["pfu_raw"], 365.0))
 
 
 def test_boundary_1_600_000() -> None:

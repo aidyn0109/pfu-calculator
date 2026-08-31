@@ -26,7 +26,6 @@ from app.config import (
     REVENUE_FACTOR,
     REVENUE_STEP,
     REVENUE_THRESHOLD,
-    S_MRP_MIN,
     TAXES_CAP,
     TAXES_FACTOR,
     TAXES_STEP,
@@ -54,11 +53,13 @@ def round_half_up(value: float, decimals: int = DISPLAY_DECIMALS) -> float:
 def _cap_for(s_mrp: float, caps: list[tuple[int, int, float]], above_max: float) -> float:
     """Вернуть кап по диапазону S_mrp. Диапазоны проверяются по порядку.
 
-    Границы включительны с обеих сторон; благодаря порядку проверки значение
-    на стыке (например 1 600 000) попадает в нижний диапазон.
+    Верхние границы включительны, поэтому значение на стыке (например
+    1 600 000) попадает в нижний диапазон. Нижняя граница первого диапазона
+    (800 000 МРП) больше не отсекает суммы: расчёт разрешён и для меньших
+    сумм — они получают кап самого нижнего уровня (200% / 365%).
     """
-    for lo, hi, cap in caps:
-        if lo <= s_mrp <= hi:
+    for _lo, hi, cap in caps:
+        if s_mrp <= hi:
             return cap
     return above_max
 
@@ -93,16 +94,14 @@ def normalize_years(years: Optional[Sequence[int]]) -> list[int]:
 def validate_amount(amount: float) -> float:
     """Проверить сумму S и вернуть S_mrp. Бросает AmountValidationError.
 
-    Шаг 0 и Шаг 1 из раздела 7.2.
+    Шаг 0 и Шаг 1 из раздела 7.2. Единственное ограничение — сумма строго
+    больше нуля. Нижний порог в 800 000 МРП снят: встречаются реальные суммы
+    ниже него, и расчёт по ним должен выполняться (капы берутся с нижнего
+    уровня — см. _cap_for).
     """
     if amount <= 0:
         raise AmountValidationError("Сумма должна быть больше нуля")
-    s_mrp = amount / MRP
-    if s_mrp < S_MRP_MIN:
-        raise AmountValidationError(
-            f"Сумма ниже минимального порога ({S_MRP_MIN} МРП)"
-        )
-    return s_mrp
+    return amount / MRP
 
 
 # --- Основной расчёт ---------------------------------------------------------

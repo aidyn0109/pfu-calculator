@@ -138,11 +138,17 @@ async def test_calculate_empty_years_means_all(client: AsyncClient) -> None:
     assert resp.json()["years"] == list(YEARS)
 
 
-async def test_calculate_below_minimum(client: AsyncClient) -> None:
+async def test_calculate_below_800k_mrp_succeeds(client: AsyncClient) -> None:
+    """Порог в 800 000 МРП снят — малая сумма считается, а не отклоняется."""
     resp = await client.post(
         "/calculate", json={"amount": 1_000_000, "company_bins": [SEED_BIN]}
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert "error" not in result or result["error"] is None
+    # Нижний уровень капов: 200% / 365%.
+    assert result["revenue_indicator"] == 200.0
+    assert result["pfu_final"] <= 365.0
 
 
 async def test_calculate_amount_not_positive(client: AsyncClient) -> None:
