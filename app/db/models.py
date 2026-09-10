@@ -51,3 +51,9 @@ class Calculation(Base):
     # JSON array годов расчёта. NULL в записях, созданных до появления выбора
     # года, — они трактуются как «все годы» (см. app/db/calculations.py).
     years: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Какая вкладка выполнила расчёт: KIND_PFU или KIND_MDE. NULL в записях,
+    # созданных до появления вкладки MDE, — они трактуются как KIND_PFU.
+    kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    # JSON с пользовательскими параметрами формул (только для MDE); NULL для
+    # обычного расчёта, где все параметры берутся из config.
+    params: Mapped[str | None] = mapped_column(Text, nullable=True)

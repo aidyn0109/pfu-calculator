@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
+    CalculateMdeRequest,
+    CalculateMdeResponse,
     CalculateRequest,
     CalculateResponse,
     CompanyFull,
@@ -19,10 +29,13 @@ from app.api.schemas import (
     CompanyUpdate,
     HistoryItem,
     ImportResponse,
+    MdeParams,
 )
-from app.config import MRP
+from app.config import KIND_MDE, KIND_PFU, MRP
 from app.core.calculator import (
     AmountValidationError,
+    CalcParams,
+    ParamsValidationError,
     calculate_pfu,
     normalize_years,
     validate_amount,
@@ -37,6 +50,8 @@ from app.data.importer import (
 from app.db.calculations import (
     get_calculation,
     get_recent_calculations,
+    kind_of,
+    params_of,
     save_calculation,
     years_of,
 )
@@ -58,18 +73,24 @@ async def list_companies(cache: CompanyCache = Depends(get_cache)) -> list[Compa
     return [CompanyShort(bin=c.bin, name=c.name) for c in cache.all()]
 
 
-@router.post(
-    "/calculate",
-    response_model=CalculateResponse,
-    dependencies=[Depends(require_login)],
-)
-async def calculate(
+async def _run_calculation(
     payload: CalculateRequest,
-    cache: CompanyCache = Depends(get_cache),
-    session: AsyncSession = Depends(get_session),
-) -> CalculateResponse:
-    """Рассчитать ПФУ по выбранным компаниям и годам, сохранить расчёт."""
-    # Шаг 0/1: валидация суммы (S<=0 отсекается pydantic → 422; S_mrp<min → 400).
+    cache: CompanyCache,
+    session: AsyncSession,
+    *,
+    kind: str,
+    params: CalcParams | None = None,
+    stored_params: dict[str, Any] | None = None,
+) -> tuple[int, float, list[int], list[dict[str, Any]]]:
+    """Общий путь расчёта для обеих вкладок.
+
+    Отличие вкладки MDE — только в `params` (пользовательские числа в формулах)
+    и в `kind`/`stored_params`, попадающих в историю. Валидация, поиск компаний
+    и сохранение одинаковы, поэтому дублировать их нельзя.
+
+    Возвращает (calculation_id, amount_mrp, selected_years, results).
+    """
+    # Шаг 0/1: валидация суммы (S<=0 отсекается pydantic → 422).
     try:
         validate_amount(payload.amount)
     except AmountValidationError as exc:
@@ -86,7 +107,8 @@ async def calculate(
         )
 
     results: list[dict[str, Any]] = [
-        calculate_pfu(company, payload.amount, selected_years) for company in found
+        calculate_pfu(company, payload.amount, selected_years, params)
+        for company in found
     ]
 
     amount_mrp = payload.amount / MRP
@@ -97,14 +119,73 @@ async def calculate(
         company_bins=payload.company_bins,
         results=results,
         years=selected_years,
+        kind=kind,
+        params=stored_params,
     )
+    return calc.id, amount_mrp, selected_years, results
 
+
+@router.post(
+    "/calculate",
+    response_model=CalculateResponse,
+    dependencies=[Depends(require_login)],
+)
+async def calculate(
+    payload: CalculateRequest,
+    cache: CompanyCache = Depends(get_cache),
+    session: AsyncSession = Depends(get_session),
+) -> CalculateResponse:
+    """Рассчитать ПФУ по выбранным компаниям и годам, сохранить расчёт.
+
+    Все параметры формул берутся из config (params не передаётся).
+    """
+    calc_id, amount_mrp, selected_years, results = await _run_calculation(
+        payload, cache, session, kind=KIND_PFU
+    )
     return CalculateResponse(
-        calculation_id=calc.id,
+        calculation_id=calc_id,
         amount=payload.amount,
         amount_mrp=amount_mrp,
         years=selected_years,
         results=results,  # type: ignore[arg-type]
+    )
+
+
+@router.post(
+    "/calculate-mde",
+    response_model=CalculateMdeResponse,
+    dependencies=[Depends(require_login)],
+)
+async def calculate_mde(
+    payload: CalculateMdeRequest,
+    cache: CompanyCache = Depends(get_cache),
+    session: AsyncSession = Depends(get_session),
+) -> CalculateMdeResponse:
+    """Расчёт вкладки «Калькулятор MDE» с пользовательскими параметрами формул.
+
+    Формулы те же, что в обычном калькуляторе; отличаются только числа,
+    которые пользователь ввёл в поля параметров.
+    """
+    try:
+        params = CalcParams(**payload.params.model_dump())
+    except ParamsValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    calc_id, amount_mrp, selected_years, results = await _run_calculation(
+        payload,
+        cache,
+        session,
+        kind=KIND_MDE,
+        params=params,
+        stored_params=payload.params.model_dump(),
+    )
+    return CalculateMdeResponse(
+        calculation_id=calc_id,
+        amount=payload.amount,
+        amount_mrp=amount_mrp,
+        years=selected_years,
+        results=results,  # type: ignore[arg-type]
+        params=payload.params,
     )
 
 
@@ -113,9 +194,21 @@ async def calculate(
     response_model=list[HistoryItem],
     dependencies=[Depends(require_login)],
 )
-async def history(session: AsyncSession = Depends(get_session)) -> list[HistoryItem]:
-    """Последние 20 расчётов."""
-    records = await get_recent_calculations(session, limit=20)
+async def history(
+    kind: Optional[str] = Query(
+        default=None,
+        description="Фильтр по вкладке: 'pfu' или 'mde'; без него — все расчёты",
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> list[HistoryItem]:
+    """Последние 20 расчётов, при необходимости — только одной вкладки."""
+    if kind is not None and kind not in (KIND_PFU, KIND_MDE):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Недопустимая вкладка: {kind}. Доступны: {KIND_PFU}, {KIND_MDE}.",
+        )
+
+    records = await get_recent_calculations(session, limit=20, kind=kind)
     return [
         HistoryItem(
             id=rec.id,
@@ -125,9 +218,17 @@ async def history(session: AsyncSession = Depends(get_session)) -> list[HistoryI
             companies_count=rec.companies_count,
             company_bins=json.loads(rec.company_bins),
             years=years_of(rec),
+            kind=kind_of(rec),
+            params=_history_params(rec),
         )
         for rec in records
     ]
+
+
+def _history_params(rec: Any) -> Optional[MdeParams]:
+    """Параметры расчёта для истории; None у обычного калькулятора."""
+    raw = params_of(rec)
+    return None if raw is None else MdeParams(**raw)
 
 
 @router.get("/export/{calculation_id}", dependencies=[Depends(require_login)])

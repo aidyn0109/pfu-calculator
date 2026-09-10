@@ -13,9 +13,22 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from app.config import BRAND_COLOR_PRIMARY, DISPLAY_DECIMALS
-from app.db.calculations import years_of
+from app.config import BRAND_COLOR_PRIMARY, DISPLAY_DECIMALS, KIND_MDE
+from app.db.calculations import kind_of, params_of, years_of
 from app.db.models import Calculation
+
+# Подписи параметров MDE в шапке выгрузки (порядок — как в форме на странице).
+_PARAM_LABELS: list[tuple[str, str]] = [
+    ("revenue_cap", "Кап дохода"),
+    ("taxes_threshold", "Налоги: порог"),
+    ("taxes_step", "Налоги: шаг"),
+    ("taxes_factor", "Налоги: коэффициент"),
+    ("taxes_cap", "Налоги: кап"),
+    ("payroll_threshold", "ФОТ: порог"),
+    ("payroll_step", "ФОТ: шаг"),
+    ("payroll_factor", "ФОТ: коэффициент"),
+    ("payroll_cap", "ФОТ: кап"),
+]
 
 _NUM_FMT = "0." + "0" * DISPLAY_DECIMALS
 
@@ -67,9 +80,22 @@ def build_export(calc: Calculation) -> bytes:
     header_font = Font(bold=True, color="FFFFFF")
 
     # Шапка с метаданными расчёта.
-    ws.append([f"Расчёт #{calc.id} от {calc.created_at}"])
+    is_mde = kind_of(calc) == KIND_MDE
+    title = "Расчёт MDE" if is_mde else "Расчёт"
+    ws.append([f"{title} #{calc.id} от {calc.created_at}"])
     ws.append([f"Сумма: {calc.amount}", f"Сумма (МРП): {calc.amount_mrp}"])
     ws.append(["Годы расчёта: " + ", ".join(str(y) for y in years_of(calc))])
+
+    # Для MDE — параметры формул, которые задал пользователь.
+    params = params_of(calc)
+    if params:
+        ws.append(["Параметры расчёта:"])
+        for key, label in _PARAM_LABELS:
+            value = params.get(key)
+            if key == "revenue_cap" and value is None:
+                value = "авто по диапазону суммы"
+            ws.append([label, value])
+
     ws.append([])
 
     header_row_idx = ws.max_row + 1

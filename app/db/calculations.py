@@ -8,7 +8,7 @@ from typing import Any, Sequence
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import MAX_HISTORY_RECORDS, YEARS
+from app.config import KIND_PFU, MAX_HISTORY_RECORDS, YEARS
 from app.db.models import Calculation
 
 
@@ -23,6 +23,22 @@ def years_of(calc: Calculation) -> list[int]:
     return list(json.loads(calc.years))
 
 
+def kind_of(calc: Calculation) -> str:
+    """Вкладка-источник расчёта.
+
+    У записей, созданных до появления вкладки MDE, колонка пустая — такие
+    расчёты выполнял обычный калькулятор.
+    """
+    return calc.kind or KIND_PFU
+
+
+def params_of(calc: Calculation) -> dict[str, Any] | None:
+    """Пользовательские параметры расчёта или None для обычного калькулятора."""
+    if not calc.params:
+        return None
+    return dict(json.loads(calc.params))
+
+
 async def save_calculation(
     session: AsyncSession,
     *,
@@ -31,6 +47,8 @@ async def save_calculation(
     company_bins: Sequence[str],
     results: list[dict[str, Any]],
     years: Sequence[int] | None = None,
+    kind: str = KIND_PFU,
+    params: dict[str, Any] | None = None,
 ) -> Calculation:
     """Сохранить расчёт и обрезать историю до MAX_HISTORY_RECORDS."""
     calc = Calculation(
@@ -40,6 +58,10 @@ async def save_calculation(
         results=json.dumps(results, ensure_ascii=False),
         companies_count=len(results),
         years=json.dumps(list(years if years is not None else YEARS)),
+        kind=kind,
+        params=(
+            None if params is None else json.dumps(params, ensure_ascii=False)
+        ),
     )
     session.add(calc)
     await session.commit()
@@ -50,12 +72,21 @@ async def save_calculation(
 
 
 async def get_recent_calculations(
-    session: AsyncSession, limit: int = 20
+    session: AsyncSession, limit: int = 20, kind: str | None = None
 ) -> Sequence[Calculation]:
-    """Вернуть последние `limit` расчётов (новые сверху)."""
-    result = await session.execute(
-        select(Calculation).order_by(Calculation.id.desc()).limit(limit)
-    )
+    """Вернуть последние `limit` расчётов (новые сверху).
+
+    `kind` фильтрует историю по вкладке-источнику; None — без фильтра.
+    Записи с пустой колонкой kind считаются расчётами обычного калькулятора.
+    """
+    stmt = select(Calculation).order_by(Calculation.id.desc())
+    if kind == KIND_PFU:
+        stmt = stmt.where(
+            (Calculation.kind == KIND_PFU) | (Calculation.kind.is_(None))
+        )
+    elif kind is not None:
+        stmt = stmt.where(Calculation.kind == kind)
+    result = await session.execute(stmt.limit(limit))
     return result.scalars().all()
 
 

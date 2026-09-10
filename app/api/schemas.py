@@ -10,7 +10,17 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.config import YEARS
+from app.config import (
+    PAYROLL_CAP,
+    PAYROLL_FACTOR,
+    PAYROLL_STEP,
+    PAYROLL_THRESHOLD,
+    TAXES_CAP,
+    TAXES_FACTOR,
+    TAXES_STEP,
+    TAXES_THRESHOLD,
+    YEARS,
+)
 
 
 # --- Компании ----------------------------------------------------------------
@@ -104,6 +114,33 @@ class CalculateRequest(BaseModel):
         return [year for year in YEARS if year in value]
 
 
+class MdeParams(BaseModel):
+    """Параметры формул, которые пользователь задаёт на вкладке MDE.
+
+    Значения по умолчанию — из config, поэтому незаполненное поле означает
+    «как в обычном калькуляторе». Шаги строго > 0: они стоят в знаменателе.
+    """
+
+    # None = кап дохода определяется автоматически по диапазону S_mrp.
+    revenue_cap: Optional[float] = Field(default=None, ge=0)
+
+    taxes_threshold: float = Field(default=TAXES_THRESHOLD)
+    taxes_step: float = Field(default=TAXES_STEP, gt=0)
+    taxes_factor: float = Field(default=TAXES_FACTOR)
+    taxes_cap: float = Field(default=TAXES_CAP, ge=0)
+
+    payroll_threshold: float = Field(default=PAYROLL_THRESHOLD)
+    payroll_step: float = Field(default=PAYROLL_STEP, gt=0)
+    payroll_factor: float = Field(default=PAYROLL_FACTOR)
+    payroll_cap: float = Field(default=PAYROLL_CAP, ge=0)
+
+
+class CalculateMdeRequest(CalculateRequest):
+    """Запрос вкладки MDE: то же, что обычный расчёт, плюс параметры формул."""
+
+    params: MdeParams = Field(default_factory=MdeParams)
+
+
 class CompanyResult(BaseModel):
     bin: str
     name: str
@@ -129,6 +166,12 @@ class CompanyResult(BaseModel):
     pfu_final: Optional[float] = None
     pfu_cap_applied: Optional[bool] = None
 
+    # Фактически применённые капы (вкладка MDE показывает их пользователю).
+    revenue_cap: Optional[float] = None
+    taxes_cap: Optional[float] = None
+    payroll_cap: Optional[float] = None
+    pfu_cap: Optional[float] = None
+
 
 class CalculateResponse(BaseModel):
     calculation_id: int
@@ -136,6 +179,12 @@ class CalculateResponse(BaseModel):
     amount_mrp: float
     years: list[int]  # годы, по которым выполнялся расчёт
     results: list[CompanyResult]
+
+
+class CalculateMdeResponse(CalculateResponse):
+    """Ответ вкладки MDE: дополнительно возвращает применённые параметры."""
+
+    params: MdeParams
 
 
 # --- История -----------------------------------------------------------------
@@ -147,6 +196,8 @@ class HistoryItem(BaseModel):
     companies_count: int
     company_bins: list[str]
     years: list[int]
+    kind: str  # "pfu" или "mde" — вкладка, выполнившая расчёт
+    params: Optional[MdeParams] = None  # только для расчётов MDE
 
 
 # --- Импорт ------------------------------------------------------------------

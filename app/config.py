@@ -55,6 +55,11 @@ TAXES_FACTOR: float = 0.5
 PAYROLL_STEP: float = 0.1
 PAYROLL_FACTOR: float = 0.1
 
+# --- Вкладки-источники расчёта -----------------------------------------------
+# Хранится в calculations.kind; NULL = KIND_PFU (записи до появления MDE).
+KIND_PFU: str = "pfu"
+KIND_MDE: str = "mde"
+
 # --- Округление для отображения/экспорта -------------------------------------
 DISPLAY_DECIMALS: int = 2
 

@@ -87,6 +87,9 @@ async def _migrate_columns() -> None:
     ]
     # Годы расчёта в истории (появились вместе с выбором года на калькуляторе).
     expected.append(("calculations", "years", "TEXT"))
+    # Вкладка-источник расчёта и её пользовательские параметры (вкладка MDE).
+    expected.append(("calculations", "kind", "VARCHAR"))
+    expected.append(("calculations", "params", "TEXT"))
 
     tables = {table for table, _, _ in expected}
     async with engine.connect() as conn:

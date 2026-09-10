@@ -93,8 +93,9 @@ async def test_calculate_ok(client: AsyncClient) -> None:
     assert data["calculation_id"] >= 1
     assert data["amount_mrp"] == pytest.approx(5_000_000_000 / MRP)
     r = data["results"][0]
-    # revenue 15.0 + taxes 10.0 + payroll 5.4 = 30.4 (с 2025 годом)
-    assert r["pfu_final"] == pytest.approx(30.4)
+    # revenue 15.0 + taxes 10.0 + payroll 8.4 = 33.4 (с 2025 годом).
+    # ФОТ считается от Revenue_sum: 6e8 / 4e9 = 15%.
+    assert r["pfu_final"] == pytest.approx(33.4)
     assert r["years_used"] == list(YEARS)
     # Годы не переданы → расчёт по всем.
     assert data["years"] == list(YEARS)
@@ -210,3 +211,146 @@ async def test_import_upload_ok(client: AsyncClient) -> None:
     data = resp.json()
     assert data["imported"] >= 1
     assert data["errors"] == []
+
+
+# --- Вкладка «Калькулятор MDE» ------------------------------------------------
+MDE_PARAMS = {
+    "revenue_cap": 42.5,
+    "taxes_threshold": 4.0,
+    "taxes_step": 0.2,
+    "taxes_factor": 0.25,
+    "taxes_cap": 50.0,
+    "payroll_threshold": 10.0,
+    "payroll_step": 0.5,
+    "payroll_factor": 0.2,
+    "payroll_cap": 80.0,
+}
+
+
+async def test_calculate_mde_applies_params(client: AsyncClient) -> None:
+    """Введённые пользователем числа подставляются в формулы."""
+    resp = await client.post(
+        "/calculate-mde",
+        json={
+            "amount": 5_000_000_000,
+            "company_bins": [SEED_BIN],
+            "params": MDE_PARAMS,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["params"] == MDE_PARAMS
+
+    r = data["results"][0]
+    assert r["revenue_cap"] == 42.5
+    assert r["taxes_cap"] == 50.0
+    assert r["payroll_cap"] == 80.0
+    # Налоги: 2e8 / 4e9 = 5% → ((5-4)/0.2)*0.25 = 1.25
+    assert r["taxes_indicator"] == pytest.approx(1.25)
+    # ФОТ: 6e8 / 4e9 = 15% → ((15-10)/0.5)*0.2 = 2.0
+    assert r["payroll_indicator"] == pytest.approx(2.0)
+
+
+async def test_calculate_mde_without_params_matches_plain(client: AsyncClient) -> None:
+    """Без параметров MDE даёт тот же результат, что обычный калькулятор."""
+    plain = await client.post(
+        "/calculate", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
+    )
+    mde = await client.post(
+        "/calculate-mde", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
+    )
+    assert plain.status_code == mde.status_code == 200
+    assert (
+        plain.json()["results"][0]["pfu_final"]
+        == mde.json()["results"][0]["pfu_final"]
+    )
+
+
+async def test_calculate_mde_empty_revenue_cap_is_auto(client: AsyncClient) -> None:
+    """revenue_cap = null → кап определяется автоматически по диапазону."""
+    resp = await client.post(
+        "/calculate-mde",
+        json={
+            "amount": 5_000_000_000,
+            "company_bins": [SEED_BIN],
+            "params": {"revenue_cap": None},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["results"][0]["revenue_cap"] == 200.0
+
+
+async def test_calculate_mde_rejects_zero_step(client: AsyncClient) -> None:
+    """Шаг стоит в знаменателе — ноль отсекается схемой."""
+    for field in ("taxes_step", "payroll_step"):
+        resp = await client.post(
+            "/calculate-mde",
+            json={
+                "amount": 5_000_000_000,
+                "company_bins": [SEED_BIN],
+                "params": {field: 0},
+            },
+        )
+        assert resp.status_code == 422, field
+
+
+async def test_history_separates_tabs(client: AsyncClient) -> None:
+    """История фильтруется по вкладке; параметры MDE сохраняются."""
+    plain = await client.post(
+        "/calculate", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
+    )
+    mde = await client.post(
+        "/calculate-mde",
+        json={
+            "amount": 5_000_000_000,
+            "company_bins": [SEED_BIN],
+            "params": MDE_PARAMS,
+        },
+    )
+    plain_id = plain.json()["calculation_id"]
+    mde_id = mde.json()["calculation_id"]
+
+    pfu_hist = (await client.get("/history?kind=pfu")).json()
+    assert [h["id"] for h in pfu_hist] == [plain_id]
+    assert pfu_hist[0]["kind"] == "pfu"
+    assert pfu_hist[0]["params"] is None
+
+    mde_hist = (await client.get("/history?kind=mde")).json()
+    assert [h["id"] for h in mde_hist] == [mde_id]
+    assert mde_hist[0]["kind"] == "mde"
+    assert mde_hist[0]["params"] == MDE_PARAMS
+
+    # Без фильтра — обе вкладки.
+    all_ids = {h["id"] for h in (await client.get("/history")).json()}
+    assert {plain_id, mde_id} <= all_ids
+
+
+async def test_history_rejects_unknown_kind(client: AsyncClient) -> None:
+    resp = await client.get("/history?kind=nope")
+    assert resp.status_code == 400
+
+
+async def test_export_mde_includes_params(client: AsyncClient) -> None:
+    """Выгрузка расчёта MDE открывается и содержит параметры в шапке."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    mde = await client.post(
+        "/calculate-mde",
+        json={
+            "amount": 5_000_000_000,
+            "company_bins": [SEED_BIN],
+            "params": MDE_PARAMS,
+        },
+    )
+    export = await client.get(f"/export/{mde.json()['calculation_id']}")
+    assert export.status_code == 200
+
+    ws = load_workbook(BytesIO(export.content)).active
+    text = "\n".join(
+        str(c.value) for row in ws.iter_rows() for c in row if c.value is not None
+    )
+    assert "Расчёт MDE" in text
+    assert "Параметры расчёта:" in text
+    assert "Налоги: порог" in text

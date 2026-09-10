@@ -1,7 +1,13 @@
 """Расчёт Показателя финансовой устойчивости (ПФУ).
 
 Только чистые функции. Никакой работы с БД. Вся бизнес-логика строго
-по разделу 7 CLAUDE.md. Все константы берутся из app.config.
+по разделу 7 CLAUDE.md. Все константы по умолчанию берутся из app.config.
+
+Один и тот же расчёт обслуживает две вкладки (раздел 7.4 CLAUDE.md):
+  * «Калькулятор» — все параметры формул из config (params не передаётся);
+  * «Калькулятор MDE» — часть параметров задаёт пользователь (CalcParams).
+Второго алгоритма не существует: MDE отличается только значениями
+параметров, а не формулами.
 
 Промежуточные вычисления ведутся с полной точностью float; округление —
 только для отображения/экспорта (helper round_half_up).
@@ -9,6 +15,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional, Sequence
 
@@ -42,6 +49,52 @@ class AmountValidationError(ValueError):
 
 class YearsValidationError(ValueError):
     """Ошибка валидации выбранных годов расчёта."""
+
+
+class ParamsValidationError(ValueError):
+    """Ошибка валидации пользовательских параметров расчёта (вкладка MDE)."""
+
+
+# --- Параметры расчёта -------------------------------------------------------
+@dataclass(frozen=True)
+class CalcParams:
+    """Параметры формул. По умолчанию — значения из config (обычный ПФУ).
+
+    Вкладка «Калькулятор MDE» подменяет часть из них значениями, которые ввёл
+    пользователь. Что можно переопределить (раздел 7.4 CLAUDE.md):
+
+    * `revenue_cap` — кап показателя дохода. None = авто по диапазону S_mrp,
+      как в обычном калькуляторе; число = жёстко заданное пользователем
+      значение (диапазоны S_mrp тогда не участвуют).
+    * `taxes_threshold` / `taxes_step` / `taxes_factor` — числа 3 / 0.1 / 0.5
+      в формуле Taxes_indicator; `taxes_cap` — предел 65%.
+    * `payroll_threshold` / `payroll_step` / `payroll_factor` — числа
+      6.6 / 0.1 / 0.1 в формуле Payroll_indicator; `payroll_cap` — предел 100%.
+
+    Формулы показателя дохода (50 / 0.1 / 0.05) и капы итогового ПФУ
+    пользователю не отдаются — они остаются из config.
+    """
+
+    revenue_cap: Optional[float] = None
+    taxes_threshold: float = TAXES_THRESHOLD
+    taxes_step: float = TAXES_STEP
+    taxes_factor: float = TAXES_FACTOR
+    taxes_cap: float = TAXES_CAP
+    payroll_threshold: float = PAYROLL_THRESHOLD
+    payroll_step: float = PAYROLL_STEP
+    payroll_factor: float = PAYROLL_FACTOR
+    payroll_cap: float = PAYROLL_CAP
+
+    def __post_init__(self) -> None:
+        # Шаг стоит в знаменателе — ноль обрушил бы расчёт.
+        if self.taxes_step == 0:
+            raise ParamsValidationError("Шаг в формуле налогов не может быть нулём")
+        if self.payroll_step == 0:
+            raise ParamsValidationError("Шаг в формуле ФОТ не может быть нулём")
+
+
+# Параметры обычного калькулятора: всё из config.
+DEFAULT_PARAMS = CalcParams()
 
 
 # --- Вспомогательные функции -------------------------------------------------
@@ -115,7 +168,10 @@ def validate_amount(amount: float) -> float:
 
 # --- Основной расчёт ---------------------------------------------------------
 def calculate_pfu(
-    company: CompanyData, amount: float, years: Optional[Sequence[int]] = None
+    company: CompanyData,
+    amount: float,
+    years: Optional[Sequence[int]] = None,
+    params: Optional[CalcParams] = None,
 ) -> dict[str, Any]:
     """Рассчитать ПФУ для одной компании по выбранным годам.
 
@@ -125,9 +181,13 @@ def calculate_pfu(
     `years` — годы, выбранные пользователем; None означает все годы из
     config.YEARS. Показатели суммируются только по этим годам.
 
+    `params` — параметры формул. None означает значения из config (обычный
+    калькулятор); вкладка MDE передаёт CalcParams с пользовательскими числами.
+
     Если у компании нет данных ни за один выбранный год — возвращается
     результат с полем `error`; остальные поля показателей отсутствуют.
     """
+    p = params if params is not None else DEFAULT_PARAMS
     s = amount
     s_mrp = validate_amount(amount)  # переиспользуем валидацию и расчёт S_mrp
     selected_years = normalize_years(years)
@@ -165,12 +225,15 @@ def calculate_pfu(
     payroll_sum = _sum_metric(company.payroll_by_year(), selected_years)
 
     # --- Шаг 3: показатель дохода --------------------------------------------
+    # Формула дохода не настраивается; настраивается только её кап.
     revenue_percent = (revenue_sum / s) * 100
     revenue_indicator_raw = (
         (revenue_percent - REVENUE_THRESHOLD) / REVENUE_STEP
     ) * REVENUE_FACTOR
-    revenue_cap = _cap_for(
-        s_mrp, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX, REVENUE_CAP_BELOW_MIN
+    revenue_cap = (
+        _cap_for(s_mrp, REVENUE_CAPS, REVENUE_CAP_ABOVE_MAX, REVENUE_CAP_BELOW_MIN)
+        if p.revenue_cap is None
+        else p.revenue_cap
     )
     revenue_cap_applied = revenue_indicator_raw > revenue_cap
     revenue_indicator = min(revenue_indicator_raw, revenue_cap)
@@ -188,18 +251,28 @@ def calculate_pfu(
     else:
         taxes_percent = (taxes_sum / revenue_sum) * 100
         taxes_indicator_raw = (
-            (taxes_percent - TAXES_THRESHOLD) / TAXES_STEP
-        ) * TAXES_FACTOR
-        taxes_cap_applied = taxes_indicator_raw > TAXES_CAP
-        taxes_indicator = min(taxes_indicator_raw, TAXES_CAP)
+            (taxes_percent - p.taxes_threshold) / p.taxes_step
+        ) * p.taxes_factor
+        taxes_cap_applied = taxes_indicator_raw > p.taxes_cap
+        taxes_indicator = min(taxes_indicator_raw, p.taxes_cap)
 
     # --- Шаг 5: показатель ФОТ -----------------------------------------------
-    payroll_percent = (payroll_sum / s) * 100
-    payroll_indicator_raw = (
-        (payroll_percent - PAYROLL_THRESHOLD) / PAYROLL_STEP
-    ) * PAYROLL_FACTOR
-    payroll_cap_applied = payroll_indicator_raw > PAYROLL_CAP
-    payroll_indicator = min(payroll_indicator_raw, PAYROLL_CAP)
+    # Знаменатель — Revenue_sum, а не S: показатель меряет долю дохода,
+    # уходящую на оплату труда. Отсюда тот же случай Revenue_sum = 0, что и
+    # у налогов, — показатель принимается равным 0 с предупреждением.
+    if revenue_sum == 0:
+        warnings.append("Сумма доходов равна нулю — показатель ФОТ принят равным 0.")
+        payroll_percent = 0.0
+        payroll_indicator_raw = 0.0
+        payroll_cap_applied = False
+        payroll_indicator = 0.0
+    else:
+        payroll_percent = (payroll_sum / revenue_sum) * 100
+        payroll_indicator_raw = (
+            (payroll_percent - p.payroll_threshold) / p.payroll_step
+        ) * p.payroll_factor
+        payroll_cap_applied = payroll_indicator_raw > p.payroll_cap
+        payroll_indicator = min(payroll_indicator_raw, p.payroll_cap)
 
     # --- Шаг 6: итоговый ПФУ -------------------------------------------------
     pfu_raw = revenue_indicator + taxes_indicator + payroll_indicator
@@ -224,4 +297,10 @@ def calculate_pfu(
         "pfu_raw": pfu_raw,
         "pfu_final": pfu_final,
         "pfu_cap_applied": pfu_cap_applied,
+        # Фактически применённые капы. Нужны вкладке MDE, чтобы показать, что
+        # реально сработало (кап дохода там может быть задан вручную).
+        "revenue_cap": revenue_cap,
+        "taxes_cap": p.taxes_cap,
+        "payroll_cap": p.payroll_cap,
+        "pfu_cap": pfu_cap,
     }

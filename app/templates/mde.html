@@ -1,11 +1,16 @@
 {% extends "base.html" %}
-{% block nav_calc %}active{% endblock %}
+{% block nav_mde %}active{% endblock %}
+{% block title %}Калькулятор MDE — Калькулятор ПФУ{% endblock %}
 {% block content %}
-<div x-data="calculator()" x-init="init()">
+<div x-data="mdeCalculator()" x-init="init()">
 
-    <h1>Расчёт показателя финансовой устойчивости</h1>
-    <p class="subtitle">Введите сумму, выберите компании и годы — ПФУ рассчитывается по каждой компании отдельно.</p>
+    <h1>Калькулятор MDE</h1>
+    <p class="subtitle">
+        Тот же расчёт ПФУ, но пороги, шаги, коэффициенты и ограничения формул задаются вручную.
+        Поля предзаполнены значениями обычного калькулятора — меняйте только то, что нужно.
+    </p>
 
+    <!-- Исходные данные -->
     <div class="card">
         <div class="grid-2">
             <div>
@@ -33,6 +38,83 @@
                         :disabled="selectedYears.length === allYears.length">Выбрать все</button>
             </div>
         </div>
+    </div>
+
+    <!-- Параметры формул -->
+    <div class="card" style="margin-top:18px;">
+        <div class="toolbar" style="margin-bottom:14px;">
+            <h2 style="margin:0;">Параметры расчёта</h2>
+            <div class="spacer"></div>
+            <button class="btn ghost sm" @click="resetParams()" :disabled="isDefault()">
+                Сбросить к значениям по умолчанию
+            </button>
+        </div>
+
+        <!-- Доход -->
+        <div class="param-group">
+            <h3>Показатель дохода</h3>
+            <div class="formula">Доход % = (Доходы / Сумма) × 100 &nbsp;·&nbsp; Индикатор = ((Доход % − 50) / 0.1) × 0.05, но не больше капа</div>
+            <div class="param-grid">
+                <div>
+                    <label for="revenue_cap">Ограничение (кап), %</label>
+                    <input id="revenue_cap" type="number" step="any" min="0" x-model.number="params.revenue_cap"
+                           :placeholder="autoRevenueCap === null ? 'авто' : 'авто: ' + autoRevenueCap">
+                </div>
+            </div>
+            <div class="muted" style="margin-top:8px;">
+                Оставьте поле пустым — кап определится автоматически по диапазону суммы в МРП<span
+                    x-show="autoRevenueCap !== null" x-text="' (сейчас это ' + autoRevenueCap + ' %)'"></span>.
+                Порог 50, шаг 0.1 и коэффициент 0.05 в этой формуле не меняются.
+            </div>
+        </div>
+
+        <!-- Налоги -->
+        <div class="param-group">
+            <h3>Показатель уплаченных налогов</h3>
+            <div class="formula">Налоги % = (Налоги / Доходы) × 100 &nbsp;·&nbsp; Индикатор = ((Налоги % − порог) / шаг) × коэффициент, но не больше капа</div>
+            <div class="param-grid">
+                <div>
+                    <label for="taxes_threshold">Порог <span class="hint">(по умолч. {{ defaults.taxes_threshold }})</span></label>
+                    <input id="taxes_threshold" type="number" step="any" x-model.number="params.taxes_threshold">
+                </div>
+                <div>
+                    <label for="taxes_step">Шаг <span class="hint">(по умолч. {{ defaults.taxes_step }})</span></label>
+                    <input id="taxes_step" type="number" step="any" min="0" x-model.number="params.taxes_step">
+                </div>
+                <div>
+                    <label for="taxes_factor">Коэффициент <span class="hint">(по умолч. {{ defaults.taxes_factor }})</span></label>
+                    <input id="taxes_factor" type="number" step="any" x-model.number="params.taxes_factor">
+                </div>
+                <div>
+                    <label for="taxes_cap">Ограничение (кап), % <span class="hint">(по умолч. {{ defaults.taxes_cap }})</span></label>
+                    <input id="taxes_cap" type="number" step="any" min="0" x-model.number="params.taxes_cap">
+                </div>
+            </div>
+        </div>
+
+        <!-- ФОТ -->
+        <div class="param-group">
+            <h3>Показатель ФОТ</h3>
+            <div class="formula">ФОТ % = (ФОТ / Доходы) × 100 &nbsp;·&nbsp; Индикатор = ((ФОТ % − порог) / шаг) × коэффициент, но не больше капа</div>
+            <div class="param-grid">
+                <div>
+                    <label for="payroll_threshold">Порог <span class="hint">(по умолч. {{ defaults.payroll_threshold }})</span></label>
+                    <input id="payroll_threshold" type="number" step="any" x-model.number="params.payroll_threshold">
+                </div>
+                <div>
+                    <label for="payroll_step">Шаг <span class="hint">(по умолч. {{ defaults.payroll_step }})</span></label>
+                    <input id="payroll_step" type="number" step="any" min="0" x-model.number="params.payroll_step">
+                </div>
+                <div>
+                    <label for="payroll_factor">Коэффициент <span class="hint">(по умолч. {{ defaults.payroll_factor }})</span></label>
+                    <input id="payroll_factor" type="number" step="any" x-model.number="params.payroll_factor">
+                </div>
+                <div>
+                    <label for="payroll_cap">Ограничение (кап), % <span class="hint">(по умолч. {{ defaults.payroll_cap }})</span></label>
+                    <input id="payroll_cap" type="number" step="any" min="0" x-model.number="params.payroll_cap">
+                </div>
+            </div>
+        </div>
 
         <div class="toolbar" style="margin-top:20px;">
             <button class="btn" @click="calculate()" :disabled="loading">
@@ -53,6 +135,15 @@
             <h2>Результаты
                 <span class="muted" x-text="'· расчёт #' + calculationId + ' · годы: ' + resultYears.join(', ')"></span>
             </h2>
+
+            <div class="card" style="padding:14px 18px;">
+                <div class="muted" style="font-weight:600;">Применённые параметры</div>
+                <div class="params-used">
+                    <template x-for="t in usedParamTags" :key="t">
+                        <span class="tag" x-text="t"></span>
+                    </template>
+                </div>
+            </div>
 
             <template x-for="r in results" :key="r.bin">
                 <div class="card">
@@ -82,18 +173,21 @@
                                     <div class="lbl">Доход</div>
                                     <div class="val" x-text="fmt(r.revenue_percent) + ' %'"></div>
                                     <div class="ind">Индикатор: <strong x-text="fmt(r.revenue_indicator)"></strong></div>
+                                    <div class="ind muted" x-text="'Кап: ' + fmt(r.revenue_cap) + ' %'"></div>
                                     <span class="pill" x-show="r.revenue_cap_applied">применено ограничение</span>
                                 </div>
                                 <div class="metric">
                                     <div class="lbl">Налоги</div>
                                     <div class="val" x-text="fmt(r.taxes_percent) + ' %'"></div>
                                     <div class="ind">Индикатор: <strong x-text="fmt(r.taxes_indicator)"></strong></div>
+                                    <div class="ind muted" x-text="'Кап: ' + fmt(r.taxes_cap) + ' %'"></div>
                                     <span class="pill" x-show="r.taxes_cap_applied">применено ограничение</span>
                                 </div>
                                 <div class="metric">
                                     <div class="lbl">ФОТ</div>
                                     <div class="val" x-text="fmt(r.payroll_percent) + ' %'"></div>
                                     <div class="ind">Индикатор: <strong x-text="fmt(r.payroll_indicator)"></strong></div>
+                                    <div class="ind muted" x-text="'Кап: ' + fmt(r.payroll_cap) + ' %'"></div>
                                     <span class="pill" x-show="r.payroll_cap_applied">применено ограничение</span>
                                 </div>
                             </div>
@@ -119,7 +213,7 @@
     <!-- История -->
     <div style="margin-top:42px;">
         <div class="toolbar" style="margin-bottom:14px;">
-            <h2 style="margin:0;">История расчётов</h2>
+            <h2 style="margin:0;">История расчётов MDE</h2>
             <div class="spacer"></div>
             <button class="btn ghost sm" @click="loadHistory()">Обновить</button>
         </div>
@@ -127,7 +221,7 @@
         <div class="card" style="padding:6px 8px;" x-show="historyItems.length">
             <table>
                 <thead>
-                    <tr><th>Дата и время</th><th>Сумма, ₸</th><th>Годы</th><th>Компаний</th><th>Экспорт</th></tr>
+                    <tr><th>Дата и время</th><th>Сумма, ₸</th><th>Годы</th><th>Компаний</th><th>Параметры</th><th>Экспорт</th></tr>
                 </thead>
                 <tbody>
                     <template x-for="h in historyItems" :key="h.id">
@@ -136,26 +230,37 @@
                             <td x-text="Number(h.amount).toLocaleString('ru-RU')"></td>
                             <td x-text="(h.years || []).join(', ')"></td>
                             <td x-text="h.companies_count"></td>
+                            <td>
+                                <button class="btn ghost sm" @click="applyParams(h.params)"
+                                        :disabled="!h.params">Подставить</button>
+                            </td>
                             <td><a class="btn ghost sm" :href="'/export/' + h.id">Скачать</a></td>
                         </tr>
                     </template>
                 </tbody>
             </table>
         </div>
-        <div class="empty" x-show="!historyItems.length">Расчётов пока нет.</div>
+        <div class="empty" x-show="!historyItems.length">Расчётов MDE пока нет.</div>
     </div>
 </div>
 
 <script>
-function calculator() {
+function mdeCalculator() {
+    // Значения по умолчанию приходят из config.py — в шаблоне не хардкодятся.
+    const DEFAULTS = {{ defaults | tojson }};
+    // Диапазоны капа дохода для подсказки «авто». Дублируют config только для
+    // отображения; фактический кап всегда считает сервер.
+    const REVENUE_CAP_TIERS = {{ revenue_cap_tiers | tojson }};
+
     return {
         mrp: {{ mrp }},
-        // Годы приходят из config.YEARS — не дублируем список в шаблоне.
         allYears: {{ years | tojson }},
         selectedYears: {{ years | tojson }},
         amount: null,
+        params: { revenue_cap: null, ...DEFAULTS },
         results: [],
         resultYears: [],
+        usedParamTags: [],
         calculationId: null,
         errorMessage: '',
         loading: false,
@@ -194,11 +299,54 @@ function calculator() {
             return Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         },
 
+        // Кап дохода, который сервер подставит при пустом поле.
+        get autoRevenueCap() {
+            if (!this.amount || this.amount <= 0) return null;
+            const sMrp = this.amount / this.mrp;
+            for (const t of REVENUE_CAP_TIERS) {
+                if (t.bound === null) return t.cap;               // всё выше максимума
+                if (t.inclusive ? sMrp <= t.bound : sMrp < t.bound) return t.cap;
+            }
+            return null;
+        },
+
         toggleYear(year) {
             this.selectedYears = this.selectedYears.includes(year)
                 ? this.selectedYears.filter(y => y !== year)
-                // Держим порядок как в allYears, а не в порядке кликов.
                 : this.allYears.filter(y => y === year || this.selectedYears.includes(y));
+        },
+
+        resetParams() {
+            this.params = { revenue_cap: null, ...DEFAULTS };
+        },
+        isDefault() {
+            if (this.params.revenue_cap !== null && this.params.revenue_cap !== '') return false;
+            return Object.keys(DEFAULTS).every(k => Number(this.params[k]) === Number(DEFAULTS[k]));
+        },
+        applyParams(p) {
+            if (!p) return;
+            this.params = { ...this.params, ...p };
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+
+        // Пустая строка/undefined → null (сервер подставит своё значение).
+        blank(v) { return v === '' || v === undefined || v === null; },
+
+        buildParams() {
+            const p = { revenue_cap: this.blank(this.params.revenue_cap) ? null : Number(this.params.revenue_cap) };
+            for (const k of Object.keys(DEFAULTS)) {
+                p[k] = this.blank(this.params[k]) ? DEFAULTS[k] : Number(this.params[k]);
+            }
+            return p;
+        },
+
+        describeParams(p) {
+            const tags = [
+                'Кап дохода: ' + (p.revenue_cap === null ? 'авто' : p.revenue_cap + ' %'),
+                `Налоги: порог ${p.taxes_threshold}, шаг ${p.taxes_step}, коэф. ${p.taxes_factor}, кап ${p.taxes_cap} %`,
+                `ФОТ: порог ${p.payroll_threshold}, шаг ${p.payroll_step}, коэф. ${p.payroll_factor}, кап ${p.payroll_cap} %`,
+            ];
+            return tags;
         },
 
         async calculate() {
@@ -208,27 +356,33 @@ function calculator() {
             if (!bins.length) { this.errorMessage = 'Выберите хотя бы одну компанию.'; return; }
             if (!this.selectedYears.length) { this.errorMessage = 'Выберите хотя бы один год расчёта.'; return; }
 
+            const params = this.buildParams();
+            if (!(params.taxes_step > 0)) { this.errorMessage = 'Шаг в формуле налогов должен быть больше нуля.'; return; }
+            if (!(params.payroll_step > 0)) { this.errorMessage = 'Шаг в формуле ФОТ должен быть больше нуля.'; return; }
+
             this.loading = true;
             try {
-                const resp = await fetch('/calculate', {
+                const resp = await fetch('/calculate-mde', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         amount: this.amount,
                         company_bins: bins,
                         years: this.selectedYears,
+                        params: params,
                     }),
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
                     this.errorMessage = (data.detail && typeof data.detail === 'string')
-                        ? data.detail : 'Ошибка расчёта. Проверьте введённые данные.';
+                        ? data.detail : 'Ошибка расчёта. Проверьте введённые данные и параметры.';
                     this.results = [];
                     return;
                 }
                 this.results = data.results;
                 this.resultYears = data.years;
                 this.calculationId = data.calculation_id;
+                this.usedParamTags = this.describeParams(data.params);
                 this.loadHistory();
             } catch (e) {
                 this.errorMessage = 'Ошибка соединения с сервером.';
@@ -243,8 +397,7 @@ function calculator() {
 
         async loadHistory() {
             try {
-                // Только расчёты этой вкладки — у MDE своя история.
-                const resp = await fetch('/history?kind=pfu');
+                const resp = await fetch('/history?kind=mde');
                 if (resp.ok) this.historyItems = await resp.json();
             } catch (e) { /* история не критична */ }
         },

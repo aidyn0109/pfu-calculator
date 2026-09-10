@@ -24,8 +24,19 @@ from app.config import (  # noqa: E402
     IMPORT_FILE_PATH,
     LOG_LEVEL,
     MRP,
+    PAYROLL_CAP,
+    PAYROLL_FACTOR,
+    PAYROLL_STEP,
+    PAYROLL_THRESHOLD,
+    REVENUE_CAP_ABOVE_MAX,
+    REVENUE_CAP_BELOW_MIN,
+    REVENUE_CAPS,
     ROLE_ADMIN,
     SECRET_KEY,
+    TAXES_CAP,
+    TAXES_FACTOR,
+    TAXES_STEP,
+    TAXES_THRESHOLD,
     YEARS,
 )
 from app.data.cache import cache  # noqa: E402
@@ -38,6 +49,43 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+# Значения по умолчанию для полей параметров на вкладке MDE. Берутся из config,
+# чтобы числа формул не дублировались в HTML (раздел 6 CLAUDE.md).
+# revenue_cap здесь нет: пустое поле = авто по диапазону суммы.
+CALC_DEFAULTS: dict[str, float] = {
+    "taxes_threshold": TAXES_THRESHOLD,
+    "taxes_step": TAXES_STEP,
+    "taxes_factor": TAXES_FACTOR,
+    "taxes_cap": TAXES_CAP,
+    "payroll_threshold": PAYROLL_THRESHOLD,
+    "payroll_step": PAYROLL_STEP,
+    "payroll_factor": PAYROLL_FACTOR,
+    "payroll_cap": PAYROLL_CAP,
+}
+
+
+def _revenue_cap_tiers() -> list[dict[str, object]]:
+    """Ступени капа дохода для подсказки «авто» на вкладке MDE.
+
+    Порядок и правила границ повторяют calculator._cap_for: сначала уровень
+    ниже первого диапазона (строгая граница), затем диапазоны по верхней
+    включительной границе, затем всё выше максимума. Собирается из config,
+    чтобы числа не дублировались в HTML; фактический кап считает сервер.
+    """
+    tiers: list[dict[str, object]] = [
+        {
+            "bound": REVENUE_CAPS[0][0],
+            "inclusive": False,
+            "cap": REVENUE_CAP_BELOW_MIN,
+        }
+    ]
+    tiers += [{"bound": hi, "inclusive": True, "cap": cap} for _lo, hi, cap in REVENUE_CAPS]
+    tiers.append({"bound": None, "inclusive": True, "cap": REVENUE_CAP_ABOVE_MAX})
+    return tiers
+
+
+REVENUE_CAP_TIERS: list[dict[str, object]] = _revenue_cap_tiers()
 
 
 @asynccontextmanager
@@ -132,6 +180,19 @@ async def index(request: Request):
     if not request.session.get("user"):
         return RedirectResponse("/login", status_code=302)
     return _render(request, "index.html")
+
+
+@app.get("/mde")
+async def mde_page(request: Request):
+    """Калькулятор MDE — тот же расчёт, но с ручным вводом параметров формул."""
+    if not request.session.get("user"):
+        return RedirectResponse("/login", status_code=302)
+    return _render(
+        request,
+        "mde.html",
+        defaults=CALC_DEFAULTS,
+        revenue_cap_tiers=REVENUE_CAP_TIERS,
+    )
 
 
 @app.get("/admin")

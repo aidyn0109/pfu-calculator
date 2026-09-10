@@ -25,6 +25,8 @@ from app.config import (
 )
 from app.core.calculator import (
     AmountValidationError,
+    CalcParams,
+    ParamsValidationError,
     YearsValidationError,
     _cap_for,
     calculate_pfu,
@@ -83,14 +85,14 @@ def test_basic_calculation() -> None:
     assert r["taxes_indicator"] == pytest.approx(10.0)
     assert r["taxes_cap_applied"] is False
 
-    # Payroll_sum 6e8 / S 5e9 = 12% → indicator = ((12-6.6)/0.1)*0.1 = 5.4
-    assert r["payroll_percent"] == pytest.approx(12.0)
-    assert r["payroll_indicator"] == pytest.approx(5.4)
+    # Payroll_sum 6e8 / Revenue_sum 4e9 = 15% → indicator = ((15-6.6)/0.1)*0.1 = 8.4
+    assert r["payroll_percent"] == pytest.approx(15.0)
+    assert r["payroll_indicator"] == pytest.approx(8.4)
     assert r["payroll_cap_applied"] is False
 
-    # PFU_raw = 15.0 + 10.0 + 5.4 = 30.4
-    assert r["pfu_raw"] == pytest.approx(30.4)
-    assert r["pfu_final"] == pytest.approx(30.4)
+    # PFU_raw = 15.0 + 10.0 + 8.4 = 33.4
+    assert r["pfu_raw"] == pytest.approx(33.4)
+    assert r["pfu_final"] == pytest.approx(33.4)
     assert r["pfu_cap_applied"] is False
 
 
@@ -161,7 +163,7 @@ def test_payroll_cap_100() -> None:
     company = make_company(
         revenue_2022=1_000_000_000,
         taxes_2022=1_000_000,
-        payroll_2022=6_000_000_000,  # Payroll% = 120% → индикатор раw 113.4 > 100
+        payroll_2022=6_000_000_000,  # Payroll% = 600% → индикатор raw 593.4 > 100
     )
     r = calculate_pfu(company, S_RANGE1)
     assert r["payroll_cap_applied"] is True
@@ -177,7 +179,7 @@ def test_pfu_cap_365() -> None:
     company = make_company(
         revenue_2022=30_000_000_000,  # revenue_indicator → 200 (cap)
         taxes_2022=2_000_000_000_000,  # taxes_indicator → 65 (cap)
-        payroll_2022=6_000_000_000,  # payroll_indicator → 100 (cap)
+        payroll_2022=60_000_000_000,  # 200% от дохода → 100 (cap)
     )
     r = calculate_pfu(company, S_RANGE1)
     assert r["pfu_raw"] == pytest.approx(365.0)
@@ -193,7 +195,7 @@ def test_pfu_cap_665() -> None:
     company = make_company(
         revenue_2022=100_000_000_000,  # → 500 (cap)
         taxes_2022=2_000_000_000_000,  # → 65 (cap)
-        payroll_2022=20_000_000_000,  # → 100 (cap)
+        payroll_2022=200_000_000_000,  # 200% от дохода → 100 (cap)
     )
     r = calculate_pfu(company, s)
     assert r["pfu_raw"] == pytest.approx(665.0)
@@ -209,7 +211,7 @@ def test_pfu_cap_865() -> None:
     company = make_company(
         revenue_2022=300_000_000_000,  # → 700 (cap)
         taxes_2022=2_000_000_000_000,  # → 65 (cap)
-        payroll_2022=40_000_000_000,  # → 100 (cap)
+        payroll_2022=600_000_000_000,  # 200% от дохода → 100 (cap)
     )
     r = calculate_pfu(company, s)
     assert r["pfu_raw"] == pytest.approx(865.0)
@@ -222,15 +224,15 @@ def test_negative_indicators() -> None:
     company = make_company(
         revenue_2022=1_000_000_000,  # 20% → revenue_indicator = -15
         taxes_2022=10_000_000,  # 1% от дохода → taxes_indicator = (1-3)*5 = -10.0
-        payroll_2022=100_000_000,  # 2% → payroll_indicator = -4.6
+        payroll_2022=50_000_000,  # 5% от дохода → payroll_indicator = -1.6
     )
     r = calculate_pfu(company, S_RANGE1)
     assert r["revenue_indicator"] == pytest.approx(-15.0)
     assert r["taxes_indicator"] == pytest.approx(-10.0)
-    assert r["payroll_indicator"] == pytest.approx(-4.6)
-    # PFU_raw = -15 - 10 - 4.6 = -29.6
-    assert r["pfu_raw"] == pytest.approx(-29.6)
-    assert r["pfu_final"] == pytest.approx(-29.6)
+    assert r["payroll_indicator"] == pytest.approx(-1.6)
+    # PFU_raw = -15 - 10 - 1.6 = -26.6
+    assert r["pfu_raw"] == pytest.approx(-26.6)
+    assert r["pfu_final"] == pytest.approx(-26.6)
 
 
 def test_revenue_sum_zero() -> None:
@@ -402,8 +404,8 @@ def test_selected_years_limit_sums() -> None:
     assert r["revenue_indicator"] == pytest.approx(-5.0)
     # Taxes_sum 1e8 / Revenue_sum 2e9 = 5%
     assert r["taxes_percent"] == pytest.approx(5.0)
-    # Payroll_sum 4e8 / S 5e9 = 8%
-    assert r["payroll_percent"] == pytest.approx(8.0)
+    # Payroll_sum 4e8 / Revenue_sum 2e9 = 20%
+    assert r["payroll_percent"] == pytest.approx(20.0)
 
 
 def test_single_year_selection() -> None:
@@ -456,3 +458,151 @@ def test_round_half_up() -> None:
     assert round_half_up(9.405) == 9.41
     assert round_half_up(2.5, 0) == 3.0
     assert round_half_up(123.455) == 123.46
+
+
+# --- Пользовательские параметры формул (вкладка MDE) -------------------------
+def test_params_default_to_config() -> None:
+    """Без params расчёт идентичен расчёту с CalcParams() по умолчанию."""
+    company = make_company(
+        revenue_2022=4_000_000_000,
+        taxes_2022=200_000_000,
+        payroll_2022=600_000_000,
+    )
+    assert calculate_pfu(company, S_RANGE1) == calculate_pfu(
+        company, S_RANGE1, None, CalcParams()
+    )
+
+
+def test_custom_revenue_cap_overrides_tier() -> None:
+    """Заданный вручную кап дохода вытесняет автоматический по диапазону."""
+    company = make_company(
+        revenue_2022=30_000_000_000,  # индикатор заведомо > 200
+        taxes_2022=1_000_000,
+        payroll_2022=1_000_000,
+    )
+    auto = calculate_pfu(company, S_RANGE1)
+    assert auto["revenue_cap"] == 200.0  # авто по диапазону [800k; 1.6m]
+
+    manual = calculate_pfu(company, S_RANGE1, None, CalcParams(revenue_cap=42.5))
+    assert manual["revenue_cap"] == 42.5
+    assert manual["revenue_indicator"] == pytest.approx(42.5)
+    assert manual["revenue_cap_applied"] is True
+
+
+def test_custom_revenue_cap_can_exceed_tier() -> None:
+    """Пользовательский кап может быть и выше автоматического."""
+    company = make_company(revenue_2022=30_000_000_000, taxes_2022=1, payroll_2022=1)
+    r = calculate_pfu(company, S_RANGE1, None, CalcParams(revenue_cap=1_000.0))
+    # Индикатор raw = ((600-50)/0.1)*0.05 = 275 < 1000 → кап не срабатывает.
+    assert r["revenue_indicator"] == pytest.approx(275.0)
+    assert r["revenue_cap_applied"] is False
+
+
+def test_custom_taxes_params() -> None:
+    """Порог, шаг, коэффициент и кап налогов берутся из params."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        taxes_2022=100_000_000,  # Taxes% = 10%
+        payroll_2022=1_000_000,
+    )
+    params = CalcParams(
+        taxes_threshold=4.0, taxes_step=0.2, taxes_factor=0.25, taxes_cap=50.0
+    )
+    r = calculate_pfu(company, S_RANGE1, None, params)
+    # ((10 - 4) / 0.2) * 0.25 = 7.5
+    assert r["taxes_percent"] == pytest.approx(10.0)
+    assert r["taxes_indicator"] == pytest.approx(7.5)
+    assert r["taxes_cap"] == 50.0
+    assert r["taxes_cap_applied"] is False
+
+
+def test_custom_taxes_cap_applies() -> None:
+    """Пользовательский кап налогов ограничивает индикатор."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        taxes_2022=2_000_000_000,  # Taxes% = 200% → raw 985
+        payroll_2022=1_000_000,
+    )
+    r = calculate_pfu(company, S_RANGE1, None, CalcParams(taxes_cap=20.0))
+    assert r["taxes_indicator"] == pytest.approx(20.0)
+    assert r["taxes_cap_applied"] is True
+
+
+def test_custom_payroll_params() -> None:
+    """Порог, шаг, коэффициент и кап ФОТ берутся из params."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        taxes_2022=1_000_000,
+        payroll_2022=300_000_000,  # ФОТ% = 30% от дохода
+    )
+    params = CalcParams(
+        payroll_threshold=10.0, payroll_step=0.5, payroll_factor=0.2, payroll_cap=80.0
+    )
+    r = calculate_pfu(company, S_RANGE1, None, params)
+    # ((30 - 10) / 0.5) * 0.2 = 8.0
+    assert r["payroll_percent"] == pytest.approx(30.0)
+    assert r["payroll_indicator"] == pytest.approx(8.0)
+    assert r["payroll_cap"] == 80.0
+    assert r["payroll_cap_applied"] is False
+
+
+def test_custom_payroll_cap_applies() -> None:
+    """Пользовательский кап ФОТ ограничивает индикатор."""
+    company = make_company(
+        revenue_2022=1_000_000_000,
+        taxes_2022=1_000_000,
+        payroll_2022=6_000_000_000,  # ФОТ% = 600% → raw 593.4
+    )
+    r = calculate_pfu(company, S_RANGE1, None, CalcParams(payroll_cap=25.0))
+    assert r["payroll_indicator"] == pytest.approx(25.0)
+    assert r["payroll_cap_applied"] is True
+
+
+def test_zero_step_rejected() -> None:
+    """Шаг стоит в знаменателе — ноль отклоняется до расчёта."""
+    with pytest.raises(ParamsValidationError):
+        CalcParams(taxes_step=0)
+    with pytest.raises(ParamsValidationError):
+        CalcParams(payroll_step=0)
+
+
+# --- Показатель ФОТ считается от Revenue_sum ---------------------------------
+def test_payroll_percent_uses_revenue_sum() -> None:
+    """Payroll_percent = ФОТ / Доходы * 100 (а не от суммы S)."""
+    company = make_company(
+        revenue_2022=2_000_000_000,
+        taxes_2022=100_000_000,
+        payroll_2022=500_000_000,
+    )
+    r = calculate_pfu(company, S_RANGE1)
+    # 5e8 / 2e9 = 25% — от суммы S 5e9 было бы 10%.
+    assert r["payroll_percent"] == pytest.approx(25.0)
+    assert r["payroll_indicator"] == pytest.approx(((25 - 6.6) / 0.1) * 0.1)
+
+
+def test_payroll_percent_independent_of_amount() -> None:
+    """Знаменатель ФОТ — доход, поэтому сумма S на процент не влияет."""
+    company = make_company(
+        revenue_2022=2_000_000_000,
+        taxes_2022=100_000_000,
+        payroll_2022=500_000_000,
+    )
+    a = calculate_pfu(company, S_RANGE1)
+    b = calculate_pfu(company, S_RANGE1 * 3)
+    assert a["payroll_percent"] == pytest.approx(b["payroll_percent"])
+    # А показатель дохода от суммы по-прежнему зависит.
+    assert a["revenue_percent"] != pytest.approx(b["revenue_percent"])
+
+
+def test_payroll_zero_when_revenue_sum_zero() -> None:
+    """Revenue_sum = 0 → Payroll_indicator = 0 + предупреждение (как у налогов)."""
+    company = make_company(
+        revenue_2022=0,
+        taxes_2022=50_000_000,
+        payroll_2022=200_000_000,
+    )
+    r = calculate_pfu(company, S_RANGE1)
+    assert r["payroll_percent"] == 0.0
+    assert r["payroll_indicator"] == 0.0
+    assert r["payroll_cap_applied"] is False
+    assert any("ФОТ" in w for w in r["warnings"])
