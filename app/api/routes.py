@@ -163,11 +163,12 @@ async def calculate_mde(
 ) -> CalculateMdeResponse:
     """Расчёт вкладки «Калькулятор MDE» с пользовательскими параметрами формул.
 
-    Формулы те же, что в обычном калькуляторе; отличаются только числа,
-    которые пользователь ввёл в поля параметров.
+    Формулы те же, что в обычном калькуляторе; отличаются числа, которые
+    пользователь ввёл в поля параметров, и отключённый кап итогового ПФУ —
+    эта вкладка показывает посчитанную сумму как есть (раздел 7.4 CLAUDE.md).
     """
     try:
-        params = CalcParams(**payload.params.model_dump())
+        params = CalcParams(**payload.params.model_dump(), apply_pfu_cap=False)
     except ParamsValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

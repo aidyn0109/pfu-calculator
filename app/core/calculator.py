@@ -71,8 +71,11 @@ class CalcParams:
     * `payroll_threshold` / `payroll_step` / `payroll_factor` — числа
       6.6 / 0.1 / 0.1 в формуле Payroll_indicator; `payroll_cap` — предел 100%.
 
-    Формулы показателя дохода (50 / 0.1 / 0.05) и капы итогового ПФУ
-    пользователю не отдаются — они остаются из config.
+    Отдельно `apply_pfu_cap` — не пользовательское поле, а режим вкладки:
+    MDE выводит итоговый ПФУ как есть, без ограничения по диапазону S_mrp.
+
+    Числа формулы показателя дохода (50 / 0.1 / 0.05) пользователю не
+    отдаются — они всегда из config.
     """
 
     revenue_cap: Optional[float] = None
@@ -84,6 +87,9 @@ class CalcParams:
     payroll_step: float = PAYROLL_STEP
     payroll_factor: float = PAYROLL_FACTOR
     payroll_cap: float = PAYROLL_CAP
+    # False → PFU_final = PFU_raw (кап итогового ПФУ не применяется).
+    # Задаётся вкладкой, а не пользователем: MDE передаёт False.
+    apply_pfu_cap: bool = True
 
     def __post_init__(self) -> None:
         # Шаг стоит в знаменателе — ноль обрушил бы расчёт.
@@ -275,10 +281,18 @@ def calculate_pfu(
         payroll_indicator = min(payroll_indicator_raw, p.payroll_cap)
 
     # --- Шаг 6: итоговый ПФУ -------------------------------------------------
+    # Вкладка MDE отключает кап итогового ПФУ (apply_pfu_cap = False) и
+    # показывает посчитанную сумму как есть. Индивидуальные капы показателей
+    # при этом продолжают работать.
     pfu_raw = revenue_indicator + taxes_indicator + payroll_indicator
-    pfu_cap = _cap_for(s_mrp, PFU_CAPS, PFU_CAP_ABOVE_MAX)
-    pfu_cap_applied = pfu_raw > pfu_cap
-    pfu_final = min(pfu_raw, pfu_cap)
+    if p.apply_pfu_cap:
+        pfu_cap: Optional[float] = _cap_for(s_mrp, PFU_CAPS, PFU_CAP_ABOVE_MAX)
+        pfu_cap_applied = pfu_raw > pfu_cap
+        pfu_final = min(pfu_raw, pfu_cap)
+    else:
+        pfu_cap = None
+        pfu_cap_applied = False
+        pfu_final = pfu_raw
 
     return {
         "bin": company.bin,

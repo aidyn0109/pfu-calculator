@@ -606,3 +606,61 @@ def test_payroll_zero_when_revenue_sum_zero() -> None:
     assert r["payroll_indicator"] == 0.0
     assert r["payroll_cap_applied"] is False
     assert any("ФОТ" in w for w in r["warnings"])
+
+
+# --- Кап итогового ПФУ отключается на вкладке MDE ----------------------------
+def _maxed_company() -> CompanyData:
+    """Компания, у которой все три показателя упираются в свои капы."""
+    return make_company(
+        revenue_2022=200_000_000_000,  # индикатор дохода заведомо огромный
+        taxes_2022=400_000_000_000,  # Taxes% = 200% → индикатор > 65
+        payroll_2022=400_000_000_000,  # ФОТ% = 200% → индикатор > 100
+    )
+
+
+def test_pfu_cap_skipped_when_disabled() -> None:
+    """apply_pfu_cap=False → PFU_final = PFU_raw, ограничение не применяется."""
+    company = _maxed_company()
+    # Кап дохода 500 поднимает сумму показателей выше PFU_cap = 365.
+    params = CalcParams(revenue_cap=500.0, apply_pfu_cap=False)
+    r = calculate_pfu(company, S_RANGE1, None, params)
+
+    assert r["pfu_raw"] == pytest.approx(500.0 + 65.0 + 100.0)  # 665
+    assert r["pfu_final"] == pytest.approx(r["pfu_raw"])
+    assert r["pfu_final"] > 365.0  # кап диапазона [800k; 1.6m] проигнорирован
+    assert r["pfu_cap_applied"] is False
+    assert r["pfu_cap"] is None
+
+
+def test_pfu_cap_applied_when_enabled() -> None:
+    """Те же данные с включённым капом ограничиваются 365% — контраст к MDE."""
+    company = _maxed_company()
+    params = CalcParams(revenue_cap=500.0)  # apply_pfu_cap по умолчанию True
+    r = calculate_pfu(company, S_RANGE1, None, params)
+
+    assert r["pfu_raw"] == pytest.approx(665.0)
+    assert r["pfu_final"] == pytest.approx(365.0)
+    assert r["pfu_cap_applied"] is True
+    assert r["pfu_cap"] == 365.0
+
+
+def test_indicator_caps_still_apply_without_pfu_cap() -> None:
+    """Отключение касается ТОЛЬКО итогового ПФУ: капы показателей работают."""
+    company = _maxed_company()
+    params = CalcParams(apply_pfu_cap=False)
+    r = calculate_pfu(company, S_RANGE1, None, params)
+
+    assert r["revenue_indicator"] == pytest.approx(200.0)  # кап по диапазону
+    assert r["revenue_cap_applied"] is True
+    assert r["taxes_indicator"] == pytest.approx(65.0)
+    assert r["taxes_cap_applied"] is True
+    assert r["payroll_indicator"] == pytest.approx(100.0)
+    assert r["payroll_cap_applied"] is True
+    assert r["pfu_final"] == pytest.approx(365.0)  # сумма капов, а не кап ПФУ
+
+
+def test_default_params_keep_pfu_cap() -> None:
+    """Обычный калькулятор кап итогового ПФУ не теряет."""
+    assert CalcParams().apply_pfu_cap is True
+    r = calculate_pfu(_maxed_company(), S_RANGE1)
+    assert r["pfu_cap"] == 365.0

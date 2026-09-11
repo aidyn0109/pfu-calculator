@@ -252,7 +252,12 @@ async def test_calculate_mde_applies_params(client: AsyncClient) -> None:
 
 
 async def test_calculate_mde_without_params_matches_plain(client: AsyncClient) -> None:
-    """Без параметров MDE даёт тот же результат, что обычный калькулятор."""
+    """Без параметров MDE даёт тот же результат, что обычный калькулятор.
+
+    Данные засеянной компании дают ПФУ 33.4% — далеко от капа 365%, поэтому
+    отключённый на MDE кап итогового ПФУ здесь ничего не меняет. Его влияние
+    проверяет test_calculate_mde_does_not_cap_final_pfu.
+    """
     plain = await client.post(
         "/calculate", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
     )
@@ -354,3 +359,44 @@ async def test_export_mde_includes_params(client: AsyncClient) -> None:
     assert "Расчёт MDE" in text
     assert "Параметры расчёта:" in text
     assert "Налоги: порог" in text
+
+
+async def test_calculate_mde_does_not_cap_final_pfu(client: AsyncClient) -> None:
+    """Вкладка MDE отдаёт итоговый ПФУ без ограничения, обычная — с ним."""
+    # Кап дохода 500 поднимает сумму показателей выше PFU_cap = 365.
+    body = {
+        "amount": 5_000_000_000,
+        "company_bins": [SEED_BIN],
+        "params": {"revenue_cap": 500.0, "taxes_cap": 65.0, "payroll_cap": 100.0},
+    }
+    mde = await client.post("/calculate-mde", json=body)
+    assert mde.status_code == 200
+    r = mde.json()["results"][0]
+
+    assert r["pfu_final"] == pytest.approx(r["pfu_raw"])
+    assert r["pfu_cap_applied"] is False
+    assert r["pfu_cap"] is None
+
+    # Для контраста: тот же расчёт обычной вкладкой упирается в 365.
+    plain = await client.post(
+        "/calculate", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
+    )
+    assert plain.json()["results"][0]["pfu_cap"] == 365.0
+
+
+async def test_export_mde_notes_uncapped_pfu(client: AsyncClient) -> None:
+    """В шапке выгрузки MDE сказано, что итоговый ПФУ не ограничивается."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    mde = await client.post(
+        "/calculate-mde",
+        json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]},
+    )
+    export = await client.get(f"/export/{mde.json()['calculation_id']}")
+    ws = load_workbook(BytesIO(export.content)).active
+    text = "\n".join(
+        str(c.value) for row in ws.iter_rows() for c in row if c.value is not None
+    )
+    assert "Ограничение итогового ПФУ: не применяется" in text

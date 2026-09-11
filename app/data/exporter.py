@@ -86,7 +86,11 @@ def build_export(calc: Calculation) -> bytes:
     ws.append([f"Сумма: {calc.amount}", f"Сумма (МРП): {calc.amount_mrp}"])
     ws.append(["Годы расчёта: " + ", ".join(str(y) for y in years_of(calc))])
 
-    # Для MDE — параметры формул, которые задал пользователь.
+    # Для MDE — параметры формул, которые задал пользователь, и напоминание,
+    # что итоговый ПФУ на этой вкладке не ограничивается.
+    if is_mde:
+        ws.append(["Ограничение итогового ПФУ: не применяется"])
+
     params = params_of(calc)
     if params:
         ws.append(["Параметры расчёта:"])
