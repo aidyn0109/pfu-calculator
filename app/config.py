@@ -60,6 +60,12 @@ PAYROLL_FACTOR: float = 0.1
 KIND_PFU: str = "pfu"
 KIND_MDE: str = "mde"
 
+# --- Знаменатель показателя ФОТ ----------------------------------------------
+# Обычный калькулятор делит ФОТ на сумму сделки S (так с создания проекта),
+# вкладка MDE — на Revenue_sum. Задаётся вкладкой, а не пользователем.
+PAYROLL_BASE_AMOUNT: str = "amount"  # Payroll_sum / S
+PAYROLL_BASE_REVENUE: str = "revenue"  # Payroll_sum / Revenue_sum
+
 # --- Округление для отображения/экспорта -------------------------------------
 DISPLAY_DECIMALS: int = 2
 

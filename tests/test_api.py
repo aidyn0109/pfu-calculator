@@ -93,9 +93,10 @@ async def test_calculate_ok(client: AsyncClient) -> None:
     assert data["calculation_id"] >= 1
     assert data["amount_mrp"] == pytest.approx(5_000_000_000 / MRP)
     r = data["results"][0]
-    # revenue 15.0 + taxes 10.0 + payroll 8.4 = 33.4 (с 2025 годом).
-    # ФОТ считается от Revenue_sum: 6e8 / 4e9 = 15%.
-    assert r["pfu_final"] == pytest.approx(33.4)
+    # revenue 15.0 + taxes 10.0 + payroll 5.4 = 30.4 (с 2025 годом).
+    # Обычный калькулятор считает ФОТ от суммы S: 6e8 / 5e9 = 12%.
+    assert r["pfu_final"] == pytest.approx(30.4)
+    assert r["payroll_base"] == "amount"
     assert r["years_used"] == list(YEARS)
     # Годы не переданы → расчёт по всем.
     assert data["years"] == list(YEARS)
@@ -251,12 +252,11 @@ async def test_calculate_mde_applies_params(client: AsyncClient) -> None:
     assert r["payroll_indicator"] == pytest.approx(2.0)
 
 
-async def test_calculate_mde_without_params_matches_plain(client: AsyncClient) -> None:
-    """Без параметров MDE даёт тот же результат, что обычный калькулятор.
+async def test_tabs_differ_in_payroll_base(client: AsyncClient) -> None:
+    """Даже без пользовательских параметров вкладки считают ФОТ по-разному.
 
-    Данные засеянной компании дают ПФУ 33.4% — далеко от капа 365%, поэтому
-    отключённый на MDE кап итогового ПФУ здесь ничего не меняет. Его влияние
-    проверяет test_calculate_mde_does_not_cap_final_pfu.
+    Засеянная компания: Revenue_sum 4e9, Payroll_sum 6e8, сумма сделки 5e9.
+    Обычный калькулятор делит ФОТ на S (12%), MDE — на Revenue_sum (15%).
     """
     plain = await client.post(
         "/calculate", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
@@ -265,10 +265,20 @@ async def test_calculate_mde_without_params_matches_plain(client: AsyncClient) -
         "/calculate-mde", json={"amount": 5_000_000_000, "company_bins": [SEED_BIN]}
     )
     assert plain.status_code == mde.status_code == 200
-    assert (
-        plain.json()["results"][0]["pfu_final"]
-        == mde.json()["results"][0]["pfu_final"]
-    )
+    pr = plain.json()["results"][0]
+    mr = mde.json()["results"][0]
+
+    assert pr["payroll_base"] == "amount"
+    assert pr["payroll_percent"] == pytest.approx(12.0)
+    assert pr["payroll_indicator"] == pytest.approx(5.4)
+
+    assert mr["payroll_base"] == "revenue"
+    assert mr["payroll_percent"] == pytest.approx(15.0)
+    assert mr["payroll_indicator"] == pytest.approx(8.4)
+
+    # Доход и налоги при этом совпадают — расходится только ФОТ.
+    assert pr["revenue_indicator"] == pytest.approx(mr["revenue_indicator"])
+    assert pr["taxes_indicator"] == pytest.approx(mr["taxes_indicator"])
 
 
 async def test_calculate_mde_empty_revenue_cap_is_auto(client: AsyncClient) -> None:

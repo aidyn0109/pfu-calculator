@@ -31,7 +31,7 @@ from app.api.schemas import (
     ImportResponse,
     MdeParams,
 )
-from app.config import KIND_MDE, KIND_PFU, MRP
+from app.config import KIND_MDE, KIND_PFU, MRP, PAYROLL_BASE_REVENUE
 from app.core.calculator import (
     AmountValidationError,
     CalcParams,
@@ -163,12 +163,16 @@ async def calculate_mde(
 ) -> CalculateMdeResponse:
     """Расчёт вкладки «Калькулятор MDE» с пользовательскими параметрами формул.
 
-    Формулы те же, что в обычном калькуляторе; отличаются числа, которые
-    пользователь ввёл в поля параметров, и отключённый кап итогового ПФУ —
-    эта вкладка показывает посчитанную сумму как есть (раздел 7.4 CLAUDE.md).
+    Отличия от обычного калькулятора (раздел 7.4 CLAUDE.md): числа формул
+    вводит пользователь, показатель ФОТ считается от Revenue_sum (а не от
+    суммы S), кап итогового ПФУ не применяется. Сами формулы те же.
     """
     try:
-        params = CalcParams(**payload.params.model_dump(), apply_pfu_cap=False)
+        params = CalcParams(
+            **payload.params.model_dump(),
+            payroll_base=PAYROLL_BASE_REVENUE,
+            apply_pfu_cap=False,
+        )
     except ParamsValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

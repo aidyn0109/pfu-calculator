@@ -17,11 +17,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Optional, Sequence
+from typing import Any, Literal, Optional, Sequence
 
 from app.config import (
     DISPLAY_DECIMALS,
     MRP,
+    PAYROLL_BASE_AMOUNT,
+    PAYROLL_BASE_REVENUE,
     PAYROLL_CAP,
     PAYROLL_FACTOR,
     PAYROLL_STEP,
@@ -55,6 +57,10 @@ class ParamsValidationError(ValueError):
     """Ошибка валидации пользовательских параметров расчёта (вкладка MDE)."""
 
 
+# Знаменатель показателя ФОТ: сумма сделки S или сумма доходов.
+PayrollBase = Literal["amount", "revenue"]
+
+
 # --- Параметры расчёта -------------------------------------------------------
 @dataclass(frozen=True)
 class CalcParams:
@@ -71,8 +77,14 @@ class CalcParams:
     * `payroll_threshold` / `payroll_step` / `payroll_factor` — числа
       6.6 / 0.1 / 0.1 в формуле Payroll_indicator; `payroll_cap` — предел 100%.
 
-    Отдельно `apply_pfu_cap` — не пользовательское поле, а режим вкладки:
-    MDE выводит итоговый ПФУ как есть, без ограничения по диапазону S_mrp.
+    Поля `payroll_base` и `apply_pfu_cap` — не пользовательские, а режимы
+    вкладки (их задаёт эндпоинт, а не форма):
+
+    * `payroll_base` — знаменатель показателя ФОТ. "amount" = сумма сделки S
+      (обычный калькулятор, как с самого создания проекта), "revenue" =
+      Revenue_sum (вкладка MDE).
+    * `apply_pfu_cap` — False на MDE: итоговый ПФУ выводится как есть, без
+      ограничения по диапазону S_mrp.
 
     Числа формулы показателя дохода (50 / 0.1 / 0.05) пользователю не
     отдаются — они всегда из config.
@@ -87,6 +99,8 @@ class CalcParams:
     payroll_step: float = PAYROLL_STEP
     payroll_factor: float = PAYROLL_FACTOR
     payroll_cap: float = PAYROLL_CAP
+    # Знаменатель показателя ФОТ. MDE передаёт "revenue".
+    payroll_base: PayrollBase = PAYROLL_BASE_AMOUNT
     # False → PFU_final = PFU_raw (кап итогового ПФУ не применяется).
     # Задаётся вкладкой, а не пользователем: MDE передаёт False.
     apply_pfu_cap: bool = True
@@ -97,6 +111,11 @@ class CalcParams:
             raise ParamsValidationError("Шаг в формуле налогов не может быть нулём")
         if self.payroll_step == 0:
             raise ParamsValidationError("Шаг в формуле ФОТ не может быть нулём")
+        if self.payroll_base not in (PAYROLL_BASE_AMOUNT, PAYROLL_BASE_REVENUE):
+            raise ParamsValidationError(
+                f"Недопустимая база показателя ФОТ: {self.payroll_base}. "
+                f"Доступны: {PAYROLL_BASE_AMOUNT}, {PAYROLL_BASE_REVENUE}."
+            )
 
 
 # Параметры обычного калькулятора: всё из config.
@@ -263,17 +282,21 @@ def calculate_pfu(
         taxes_indicator = min(taxes_indicator_raw, p.taxes_cap)
 
     # --- Шаг 5: показатель ФОТ -----------------------------------------------
-    # Знаменатель — Revenue_sum, а не S: показатель меряет долю дохода,
-    # уходящую на оплату труда. Отсюда тот же случай Revenue_sum = 0, что и
-    # у налогов, — показатель принимается равным 0 с предупреждением.
-    if revenue_sum == 0:
+    # Знаменатель зависит от вкладки (раздел 7.4 CLAUDE.md): обычный
+    # калькулятор делит ФОТ на сумму сделки S, вкладка MDE — на Revenue_sum.
+    payroll_base_value = (
+        revenue_sum if p.payroll_base == PAYROLL_BASE_REVENUE else s
+    )
+    if payroll_base_value == 0:
+        # Возможно только при базе Revenue_sum: S всегда > 0 (validate_amount).
+        # Поведение как у налогов — показатель 0 с предупреждением.
         warnings.append("Сумма доходов равна нулю — показатель ФОТ принят равным 0.")
         payroll_percent = 0.0
         payroll_indicator_raw = 0.0
         payroll_cap_applied = False
         payroll_indicator = 0.0
     else:
-        payroll_percent = (payroll_sum / revenue_sum) * 100
+        payroll_percent = (payroll_sum / payroll_base_value) * 100
         payroll_indicator_raw = (
             (payroll_percent - p.payroll_threshold) / p.payroll_step
         ) * p.payroll_factor
@@ -317,4 +340,6 @@ def calculate_pfu(
         "taxes_cap": p.taxes_cap,
         "payroll_cap": p.payroll_cap,
         "pfu_cap": pfu_cap,
+        # Знаменатель показателя ФОТ: вкладки считают его по-разному.
+        "payroll_base": p.payroll_base,
     }

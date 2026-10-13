@@ -172,6 +172,9 @@ class CompanyResult(BaseModel):
     payroll_cap: Optional[float] = None
     pfu_cap: Optional[float] = None
 
+    # Знаменатель показателя ФОТ: "amount" (сумма S) или "revenue" (доходы).
+    payroll_base: Optional[str] = None
+
 
 class CalculateResponse(BaseModel):
     calculation_id: int
